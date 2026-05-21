@@ -1,7 +1,10 @@
 package fingerprint
 
 import (
+	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Nicholas-Kloster/tome/internal/corpus"
@@ -104,5 +107,45 @@ func TestMatchFilterHTMLContent(t *testing.T) {
 	}
 	if matchFilter(`http.html:"/v1/graphql"`, nonMatching) {
 		t.Error("http.html filter should not match host without /v1/graphql")
+	}
+}
+
+func TestProbeActiveSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"version":"1.3.1","modules":["text2vec-openai"],"hostname":"weaviate-0"}`)
+	}))
+	defer srv.Close()
+
+	probe := corpus.ActiveProbe{
+		Path:            "/v1/meta",
+		Method:          "GET",
+		ResponseMarkers: []string{"version", "modules", "hostname"},
+	}
+
+	verified, version := ProbeActive(srv.Listener.Addr().String(), probe)
+	if !verified {
+		t.Error("expected verified=true")
+	}
+	if version != "1.3.1" {
+		t.Errorf("version = %q, want 1.3.1", version)
+	}
+}
+
+func TestProbeActiveMarkerMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	probe := corpus.ActiveProbe{
+		Path:            "/v1/meta",
+		Method:          "GET",
+		ResponseMarkers: []string{"version", "modules"},
+	}
+
+	verified, _ := ProbeActive(srv.Listener.Addr().String(), probe)
+	if verified {
+		t.Error("expected verified=false when markers missing")
 	}
 }
