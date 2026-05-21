@@ -42,7 +42,6 @@ func ProbeActive(addr string, probe corpus.ActiveProbe) (bool, string) {
 	bodyStr := string(body)
 
 	for _, marker := range probe.ResponseMarkers {
-		marker = strings.Trim(marker, `"`)
 		if !strings.Contains(bodyStr, marker) {
 			return false, ""
 		}
