@@ -51,7 +51,7 @@ func MatchPassive(p corpus.Platform, host ShodanHost) float64 {
 func matchFilter(filter string, host ShodanHost) bool {
 	field, value, ok := strings.Cut(filter, ":")
 	if !ok {
-		return hostContains(host, filter)
+		return hostContains(host, strings.ToLower(filter))
 	}
 	value = strings.Trim(value, `"`)
 	valueLower := strings.ToLower(value)
@@ -106,7 +106,6 @@ func matchFilter(filter string, host ShodanHost) bool {
 }
 
 func hostContains(host ShodanHost, s string) bool {
-	s = strings.ToLower(s)
 	for _, d := range host.Data {
 		if strings.Contains(strings.ToLower(d.Data), s) ||
 			strings.Contains(strings.ToLower(d.Product), s) ||

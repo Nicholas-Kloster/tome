@@ -1,6 +1,7 @@
 package fingerprint
 
 import (
+	"math"
 	"testing"
 
 	"github.com/Nicholas-Kloster/tome/internal/corpus"
@@ -50,8 +51,9 @@ func TestMatchPassivePartialMatch(t *testing.T) {
 	}
 	conf := MatchPassive(weaviatePlatform, host)
 	// product:Weaviate and port:8080 match; http.html does not
-	if conf < 0.5 || conf >= 1.0 {
-		t.Errorf("partial match confidence = %.2f, want ~0.67", conf)
+	const want = 2.0 / 3.0
+	if math.Abs(conf-want) > 1e-9 {
+		t.Errorf("partial match confidence = %.4f, want %.4f", conf, want)
 	}
 }
 
@@ -91,5 +93,16 @@ func TestMatchFilterHTMLCaseInsensitive(t *testing.T) {
 	host := ShodanHost{Data: []ShodanData{{HTTP: ShodanHTTP{HTML: "Visit /V1/GRAPHQL for explorer"}}}}
 	if !matchFilter("http.html:\"/v1/graphql\"", host) {
 		t.Error("html match should be case-insensitive")
+	}
+}
+
+func TestMatchFilterHTMLContent(t *testing.T) {
+	matching := ShodanHost{Data: []ShodanData{{HTTP: ShodanHTTP{HTML: "visit /v1/graphql for explorer"}}}}
+	nonMatching := ShodanHost{Data: []ShodanData{{HTTP: ShodanHTTP{HTML: "welcome to nginx"}}}}
+	if !matchFilter(`http.html:"/v1/graphql"`, matching) {
+		t.Error("http.html filter should match host containing /v1/graphql")
+	}
+	if matchFilter(`http.html:"/v1/graphql"`, nonMatching) {
+		t.Error("http.html filter should not match host without /v1/graphql")
 	}
 }
