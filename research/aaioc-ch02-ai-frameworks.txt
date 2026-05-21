@@ -1,0 +1,435 @@
+2
+AI Frameworks for Security Automation
+
+Security teams today are under pressure to move faster than ever – attack surfaces are expanding, vulnerabilities are published daily, and manual workflows can't keep up. In the middle of this shift, AI frameworks have emerged as powerful tools that promise to bring scale, speed, and a new level of intelligence to how we approach automation. But let's be clear: not every AI tool was designed with cybersecurity in mind, and not all of them are practical for offensive workflows.
+
+When I first started exploring these frameworks, I wasn't looking for the flashiest interface or the deepest machine learning (ML) stack. I was looking for tools that could help me solve real problems, such as automating reconnaissance at scale, triaging Common Vulnerabilities and Exposures (CVEs) based on real exploitability, or building agents that could pull threat data and act on it autonomously. Early on, one of the biggest friction points I encountered was figuring out how to reliably pass output from a tool into an agent without losing structure or fidelity. Even a small transformation step could distort the original data, and that taught me quickly that schema discipline and well-defined handoff boundaries matter far more than most people realize. This chapter distills what I've learned through hands-on testing with multiple platforms, from no-code systems such as n8n to programmable frameworks such as LangChain.
+
+We're not here to learn AI for AI's sake. We're here to build. To automate the parts of offensive security that are repetitive, brittle, or slow, and to design agentic systems that think and adapt as we do. This chapter is your map through the tooling landscape. Let's find out what fits your mindset and your mission.
+
+In this chapter, we'll compare no-code platforms such as n8n with code-first frameworks such as LangChain and AutoGen, focusing on how each one handles automation, reasoning, and real-world security workflows. You'll see where each tool excels, where it falls short, and how to decide which approach aligns best with your goals. By the end, you'll have a clear picture of when to reach for simplicity and when to invest in full programmability.
+
+The following topics will be covered in this chapter:
+
+Overview of AI frameworks for security automation
+LangChain – strengths and security use cases
+n8n – no-code automation security use cases
+Other notable tools – CrewAI, AutoGen, and beyond
+How to choose the right tool for your use case
+Overview of AI frameworks for security automation
+
+When we talk about AI frameworks in the context of cybersecurity, we're not referring to general-purpose large language models such as ChatGPT, nor are we talking about heavyweight ML platforms such as TensorFlow, PyTorch, or Keras. Those tools are excellent for training and experimenting with ML models, but they are not designed to orchestrate multi-step reasoning or coordinate agents in a security environment. What we mean here are flexible, programmable environments, sometimes visual, sometimes code-based, that help orchestrate, structure, and optimize the work of intelligent agents. These frameworks enable automation that doesn't just follow a static script but adapts based on live conditions, context, and previously observed results.
+
+An AI framework in this context serves as the underlying logic layer, almost like the nervous system of an agentic security toolchain. Instead of saying "Run this scan every night," we're now saying "Evaluate the current attack surface, decide whether a scan is necessary, and determine what kind of scan would be most effective." This shift marks a profound change not just in tooling, but in mindset. It moves security automation from passive execution to active decision-making.
+
+Most security teams are not yet ready for this change – not because the need isn't there, but because the tooling has traditionally been fragmented, clunky, or too difficult to piece together into something cohesive. Agentic frameworks address that gap. They bring structure to chaos and introduce three capabilities that are especially crucial in offensive and defensive security contexts, namely, goal-driven execution, memory, and autonomy with feedback loops:
+
+Goal-driven execution means the agent receives an objective, not a linear sequence of steps. It determines the strategy on its own. Think of it less like scripting and more like assigning a mission to an autonomous drone; it plots the course, reacts to turbulence, and recalibrates in real time.
+Memory allows agents to remember prior actions, failed branches, tool outputs, or environment conditions, using either short-term session memory or vector embeddings to provide continuity across tasks. While memory is a core capability, some platforms only support session-based memory that resets once the interaction ends, which limits how much context can be carried over between workflows. This enables context continuity across tasks, avoids redundant work, and lets agents fine-tune their decisions over time.
+Autonomy with feedback loops means agents don't freeze or crash when something breaks; they adapt. If a tool fails, they try another; if a scan times out, they reschedule or reconfigure. This resilience is critical in the unpredictability of real-world systems.
+No-code and code-first frameworks
+
+To make sense of the ecosystem, it helps to place frameworks into two broad categories: no-code platforms and code-first frameworks. No-code platforms such as n8n, Make, or even Microsoft Power Automate provide a visual interface to rapidly build logic chains. They are beginner-friendly but surprisingly robust, especially when paired with prebuilt connectors to tools such as Slack, Shodan, GitHub, AWS, or Elasticsearch. Security teams with limited coding capacity often favor these platforms for tasks such as log aggregation, alert routing, automated compliance reporting, or scheduled threat intel enrichment.
+
+On the other side are code-first frameworks such as LangChain, AutoGen, CrewAI, and Semantic Kernel. These offer a granular level of control. You can define custom memory classes, invoke multiple reasoning chains, inject prompt engineering steps dynamically, and orchestrate long-running multi-agent workflows. While these require a strong grasp of programming (typically, Python), they're ideal for advanced use cases such as offensive workflow chaining, post-exploitation automation, or hybrid LLM+tool agents that simulate human attackers.
+
+The trade-offs between these categories are not about good versus bad but about fit. Teams need to evaluate what stage of maturity their workflows are in and what level of control or simplicity they require. Here's a quick comparison of the two styles:
+
+Feature
+
+	
+
+No-code frameworks (e.g., n8n)
+
+	
+
+Code-first frameworks (e.g., LangChain and AutoGen)
+
+
+
+
+Required skill level
+
+	
+
+Low to medium
+
+	
+
+Medium to high
+
+
+
+
+Customizability
+
+	
+
+Moderate (via visual blocks and functions)
+
+	
+
+High (full control over logic and structure)
+
+
+
+
+Use case examples
+
+	
+
+Alerting, reporting, and enrichment
+
+	
+
+Chained exploits, reconnaissance agents, and reasoning simulations
+
+
+
+
+Integration speed
+
+	
+
+Fast (prebuilt modules)
+
+	
+
+Slower (requires development time)
+
+
+
+
+Flexibility for memory/feedback
+
+	
+
+Limited (unless extended with code)
+
+	
+
+Deep (explicit memory control and adaptive flow)
+
+
+
+
+Ideal for…
+
+	
+
+Security analysts, pentesters, and compliance teams
+
+	
+
+Pentesters, red teamers, and offensive R&D
+
+
+
+
+Observability/monitoring
+
+	
+
+Basic logging; limited visibility unless extended with plugins
+
+	
+
+Deep monitoring support (traces, logs, metrics); easier debugging for long-running agent chains
+
+Table 2.1 – Comparing no-code and code-first frameworks
+
+Choosing between them isn't binary. In many mature environments, both are used in tandem: no-code for workflow scaffolding and code-first for complex logic layers.
+
+How agentic AI fits into security automation
+
+Where agentic AI fits into all this is right at the intersection of orchestration, reasoning, and adaptability. Instead of telling tools what to do, you're now defining what problem to solve and letting agents determine the path. The practical result is not just more automation, but better automation: smarter, context-aware, and resilient. One agent might discover assets, another one classifies them based on risk, while a third decides whether to launch a scan or trigger manual review. These agents collaborate, share memory, and make decisions independently when needed. They can pass along results or context, effectively handing off responsibilities just like a well-organized SOC team would do.
+
+This modularity allows organizations to avoid monolithic security tooling and instead embrace composability, designing workflows where individual agents can be updated, replaced, or extended without breaking the entire system. For example, in a monolithic workflow, a single script might handle reconnaissance, scanning, enrichment, and reporting; if one part fails, the whole workflow collapses. In a modular agentic workflow, each step is handled by a separate agent, so failures are isolated and components can evolve independently. This is especially valuable in environments where tools and infrastructure change rapidly, and workflows need to evolve continuously.
+
+It also reduces the cognitive load on security teams. Instead of manually tracking alert volumes, scan histories, or tool failures, agents can do that themselves. They can analyze whether a spike in DNS lookups for a subdomain justifies triggering passive reconnaissance, or determine whether a failed login anomaly across multiple regions is worth escalating. The outcome is a more intelligent, proactive system that scales with your environment and doesn't burn out your team in the process.
+
+This level of automation unlocks new possibilities across a variety of scenarios. In attack surface management, it enables intelligent prioritization based on recent changes, though continuous agent-driven monitoring can introduce additional compute or API-usage costs if not tuned carefully. In red teaming, it allows chaining of discovery, privilege escalation, and lateral movement actions without constant human input. In reporting, it enables the generation of templated or dynamic reports with CVE tags, severity calculations, and business impact statements, all auto-populated from agent memory.
+
+Ultimately, agentic AI frameworks offer a blueprint for building the next generation of security automation systems that don't just execute tasks, but interpret, decide, and adapt. They help us move from reactive playbooks to proactive security orchestration. And in doing so, they give us a way to scale our impact without scaling headcount or exhaustion.
+
+Next, we'll look at how these principles appear in real frameworks, beginning with LangChain.
+
+LangChain – strengths and security use cases
+
+LangChain is one of the most recognized and mature code-first frameworks for building intelligent agents, particularly those designed to operate in close coordination with large language models (LLMs). Unlike no-code environments that prioritize accessibility, LangChain requires a solid understanding of Python, object-oriented programming, and software architecture patterns. But what you get in return is far more than just access to APIs or basic automation; you gain granular control over the reasoning and behavior of your agents, their memory models, their tool selection process, and their ability to adapt in real time based on structured logic and unstructured data.
+
+At its core, LangChain is built around the concept of composability. It allows you to construct agent pipelines using modular components such as prompt templates, memory stores, retrievers, tool interfaces, and output parsers. These components are stitched together like an intelligent supply chain, each part responsible for transforming or interpreting data, making decisions, or triggering downstream actions. Unlike a traditional bash or Python pipeline, which executes tools in a fixed linear order, LangChain's components can branch, reroute, or adapt based on model reasoning and intermediate state. This architecture makes it especially powerful in domains such as offensive security and threat research, where workflows often contain recursive logic, unpredictable output, or branching strategies based on attack results.
+
+Consider the value of this in a real-world security context. You could design a LangChain agent that accepts a seed list of domain names, performs reconnaissance using tools such as Subfinder or SecurityTrails APIs, identifies which subdomains expose login portals through headless browsing or screenshot diffing, then conditionally invokes a password spraying module integrating with Hydra, Medusa, or a custom-built function. If valid credentials are found, the agent can proceed to validate session tokens, extract cookies, perform privilege validation, and finally, submit a structured report entry, complete with evidence and impact assessment. All of this can be performed autonomously, with the agent deciding what actions make sense at each stage depending on observed outcomes, past context, or external enrichment results.
+
+This kind of intelligent flow is not just about scripting a checklist; it's about building decision-making into your automation logic. The agent isn't blindly running tools; it's reasoning through the environment. It can pause, re-evaluate, escalate, or retry. It can ask questions such as "Did this login page respond differently than expected?" or "Is this domain part of a known SaaS provider's IP range?" and then make logical decisions based on the answers.
+
+LangChain truly excels in research-heavy workflows as well. For instance, in vulnerability intelligence, you can build an agent that periodically scrapes and parses CVE feeds, cross-references exploit PoCs on GitHub, filters by Common Vulnerability Scoring System (CVSS) score or Common Weakness Enumeration (CWE) category, and matches findings to an internal asset inventory indexed by Shodan or internal Configuration Management Database (CMDB) APIs. With memory-enabled agents, this process becomes even more powerful: the agent knows which vulnerabilities were seen previously, which assets were affected, and what remediations have already been recommended. It can prioritize new findings based on environmental fit, rather than treating every issue as novel. The same logic can be extended to threat hunting, IOC correlation, or even phishing infrastructure detection, where an agent loops through email indicators, checks registrar data, performs WHOIS lookups, and dynamically updates blocklists or SIEM dashboards.
+
+LangChain – strengths and challenges
+
+Security-specific strengths of LangChain are numerous and go beyond generic LLM integration:
+
+Explicit memory management lets you persist context across multiple invocations. For example, an agent working across hundreds of assets can remember which assets failed to respond, which had outdated TLS configurations, or which domains repeatedly returned 403 codes, avoiding redundant effort or circular logic.
+Custom prompt engineering allows fine-tuned instruction of LLMs for use in structured tasks, such as generating CVE summaries, creating ticket templates, or extracting data from PDF pentest reports. You can encode defensive patterns to avoid hallucination, ensure the use of specific response formats, or enforce token budget constraints for long-running chains.
+Tool chaining enables seamless integration between Python functions, third-party APIs, and LLM-driven analysis in a single feedback loop. For instance, one tool might call a threat intel API, another runs a Python parser, a third calls an LLM to interpret the JSON output, and the fourth formats it for downstream ingestion into Splunk or Jira.
+Error handling and recovery logic are first-class features. Agents can include retry strategies, fallback tools, conditional branching on failed states, or even decision trees where alternative paths are pursued based on prior tool responses. For example, if a port scan fails due to a timeout, the agent can rerun the task with reduced timeout windows, switch to a different scanner, or queue the task for manual inspection without developer intervention.
+
+That said, LangChain is not without challenges. The same flexibility that makes it powerful also increases its complexity. You're not just gluing tools together; you're effectively developing intelligent, stateful applications with orchestration, logic flow, error handling, and memory management built in. That requires testing, observability, and architectural discipline. If your security team is small or lacks strong Python fluency, the initial learning curve may slow adoption. In such cases, it may be more efficient to prototype core ideas in no-code platforms, then gradually migrate critical workflows to LangChain as your operational maturity increases.
+
+It's also important to understand that LangChain is not a silver bullet; it's a framework. The quality and adaptability of your agents will still depend on how well you design them: how you manage prompts, structure memory, choose tools, and chain actions. Poorly scoped agents can still run inefficiently or hallucinate, and without monitoring, you may lose track of what logic decisions are being made under the hood. Implementing guardrails, audit logs, and observability into LangChain workflows is essential for security-critical applications.
+
+Despite this, the upside is substantial. LangChain enables a new class of offensive security tools: ones that think, adapt, and evolve. It turns penetration testing into a programmable discipline, threat intelligence into an agent-driven flow, and security engineering into a collaborative design process between human and machine. And as the ecosystem around LangChain continues to grow with integrations into vector databases, secure toolkits, and multi-agent architectures, its relevance in security automation will only expand.
+
+If your goal is to build smart, modular, and context-aware workflows that go far beyond what traditional scripting can offer, LangChain is not just a good option; it's a transformative one.
+
+n8n – no-code automation for security professionals
+
+If you've ever wished you could build powerful offensive security workflows without writing hundreds of lines of code, n8n is a platform worth your attention. As a no-code/low-code automation tool, n8n allows you to connect APIs, transform data, and orchestrate complex workflows using a visual interface. And the best part? It's open source, self-hostable, and highly extensible.
+
+From the beginning of this book, I've emphasized the value of agentic thinking: workflows that reason, adapt, and evolve. n8n gives us an approachable way to prototype that philosophy without deep programming knowledge.
+
+With n8n, each task becomes a visual node. You can drag and drop a reconnaissance step, connect it to an OpenAI enrichment prompt, pass that into a webhook, and then trigger a Jira ticket, all without touching a terminal. This format is ideal for pentesters, AppSec engineers, and security analysts who understand security logic but don't necessarily want to maintain custom scripts.
+
+In my own testing projects, I've used n8n to build the following:
+
+Passive reconnaissance bots that scan new domains daily
+Vulnerability correlation agents that pull CVEs from RSS feeds, check them against exposed ports, and notify Slack
+Post-exploitation workflows that parse session tokens and trigger custom reports
+
+What makes n8n especially useful in a security context is its deep integration with other tools. You can connect it to Shodan, VirusTotal, GitHub, Elasticsearch, AWS, and even custom internal APIs. You're not starting from scratch; you're orchestrating across an existing ecosystem.
+
+Here are some key features that make n8n stand out:
+
+No-code logic blocks: Build conditional branches and loops visually
+Native LLM support: Easily plug in OpenAI or Hugging Face to handle enrichment or classification
+Webhook triggers: Launch workflows from user interaction, alerts, or system events
+Self-hosted control: Deploy n8n in isolated or sensitive environments
+Scalable architecture: Run heavy jobs asynchronously or through custom nodes
+
+And perhaps most importantly, n8n reduces bottlenecks. In many security teams, automation gets blocked because only one or two people can write and maintain the code. With n8n, more of the team can contribute, test, and iterate.
+
+That doesn't mean it's without limitations. For deeply customized logic, high-throughput environments, or persistent agent memory, code-first tools still offer more precision. But for 80% of day-to-day security automation needs, especially for mid-sized teams, n8n hits the sweet spot.
+
+In the next section, we'll take a look at some of the other rising tools in this space and explore how they compare in terms of flexibility, learning curve, and offensive security fit.
+
+Other notable tools – CrewAI, AutoGen, and beyond
+
+While n8n and LangChain represent two distinct ends of the complexity spectrum, they're not the only players worth exploring. Several emerging tools offer powerful capabilities for cybersecurity automation, each with its own flavor of agent design, orchestration control, and extensibility. In this section, we'll look briefly at CrewAI, AutoGen, and a few others that I believe are worth watching.
+
+CrewAI
+
+CrewAI is a framework built specifically to coordinate multiple agents. Think of it as an agent task manager. It allows you to assign roles, distribute responsibilities, and let each agent focus on a subtask. For example, one agent might handle reconnaissance, another performs CVE triage, and a third handles reporting. The "crew" structure is particularly useful when modeling realistic offensive workflows that mimic how human teams operate in red team scenarios.
+
+In practice, coordination isn't always linear. For example, a privilege-escalation agent may be configured to wait for reconnaissance results before executing, enforcing strict dependency ordering. And if a reconnaissance agent fails or returns incomplete data, a controller agent can retry the task, reassign it to another sub-agent, or automatically shift downstream logic to a fallback path. This makes CrewAI suitable for workflows that require complex decision chains or fault-tolerant agent behavior.
+
+In some of my testing, I've used CrewAI to do the following:
+
+Delegate scanning tasks to sub-agents running concurrently
+Use a controller agent to monitor their output and reassign tasks dynamically
+Design playbooks where logic shifts based on each agent's feedback
+
+This kind of orchestration can be overkill for simpler workflows, but when you want your automation to simulate real-world adversary coordination, it's invaluable.
+
+AutoGen
+
+AutoGen takes a slightly different approach. It's focused on creating self-improving agents that evaluate their own decisions, revise strategies, and rerun steps when needed. This makes AutoGen ideal for building exploratory tools, such as LLM-driven fuzzers, exploit generators, or reconnaissance bots that attempt new enumeration paths when initial ones fail.
+
+However, AutoGen's self-improving nature can occasionally lead to runaway loops or unexpected recursion if guardrails aren't applied. In exploratory workflows such as fuzzing or multi-step exploit generation, an agent may repeatedly revise its plan or retrigger earlier steps. Adding explicit stopping conditions, maximum iteration limits, or human-in-the-loop checkpoints helps prevent uncontrolled behavior.
+
+Security use cases for AutoGen might include the following:
+
+Adaptive directory brute-forcing based on response entropy
+Generating and testing multiple PoC payloads for CVE validation
+Continuously evolving phishing simulations with personalized email logic
+
+While still early in its maturity, AutoGen's emphasis on feedback and self-optimization aligns well with the evolving needs of modern red teams.
+
+Other tools worth noting are as follows:
+
+Flowise: A visual builder similar to n8n but more tightly coupled with LLM workflows (https://flowiseai.com/)
+PromptLayer: Useful for tracking, versioning, and auditing prompts, especially helpful when integrating LLMs into compliance-sensitive workflows (https://www.promptlayer.com/)
+ReAct and Toolformer patterns: More like architectural approaches than tools, but they can be combined with LangChain or CrewAI to enhance agent reasoning (ReAct paper: https://arxiv.org/abs/2210.03629; Toolformer paper: https://arxiv.org/abs/2302.04761)
+
+If you're experimenting, I recommend picking one code-first and one no-code framework to go deep on, and keeping others on your radar for modular add-ons. What matters most isn't the tool; it's how you align it with the workflow logic, operational risk, and goals of your security program.
+
+In the next and final section of this chapter, I'll walk you through how to decide which framework fits your current needs, team capabilities, and desired outcomes.
+
+How to choose the right tool for your use case
+
+With so many options on the table, from visual builders such as n8n to code-first ecosystems such as LangChain or orchestration layers such as CrewAI, it's easy to get overwhelmed. This section is about cutting through the noise. You don't need the most advanced tool; you need the right tool for your team, your environment, and the job at hand.
+
+Start by evaluating your current workflow maturity:
+
+Are you still manually performing reconnaissance, reporting, or CVE triage?
+Do your team members have scripting skills, or would a visual interface accelerate adoption?
+Are your automation needs isolated (e.g., daily alerts) or interconnected (e.g., multi-step decision chains)?
+Is your goal experimentation, optimization, or full-scale production?
+
+If you're just beginning to automate offensive workflows, n8n is a fantastic place to start. It's fast to deploy, requires zero infrastructure beyond a browser and a server, and gets results quickly, even for teams with no development background. You can always "graduate" to deeper systems such as LangChain as your logic gets more complex.
+
+LangChain or AutoGen make more sense if you're doing the following:
+
+Building agents that require long-term or persistent memory (e.g., storing facts, state, or historical context across sessions)
+Performing conditional actions based on prompt responses
+Linking multiple LLMs or task-specific tools
+Managing unpredictable or evolving data pipelines
+
+And CrewAI shines when you're modeling collaborative agents or need delegation and oversight logic, for instance, coordinating multiple agents across infrastructure discovery, payload crafting, and post-exploitation.
+
+Another lens to use, think in terms of scale. If you're automating one specific report, the overhead of LangChain might not be worth it. But if you're designing a security bot that's meant to adapt, evolve, and support a team over time, then a more flexible framework becomes essential.
+
+Before we dive into the breakdown, it's also important to factor in the life cycle of your workflows. Are you building something that runs on demand during tests, or something that operates continuously in the background? Will your agents need to learn from prior actions, store memory, or be monitored for behavior shifts?
+
+Ask yourself what kind of integration overhead you can handle. If your current stack includes API-accessible tools such as Shodan, VirusTotal, Jira, and Slack, you'll benefit more from frameworks that support drag-and-drop integrations or webhook triggers. On the other hand, if your workflow relies on chaining logic-heavy, LLM-enhanced decisions such as payload generation or PoC testing, a code-first system with agent memory and prompt control becomes a better fit.
+
+Another angle is team collaboration. In large or growing teams, it's often easier to train multiple people to use a visual flow editor than to maintain shared code bases. n8n excels here. For one-person red teams or research engineers working on edge-case problems, the flexibility of LangChain or AutoGen might outweigh ease of use.
+
+Finally, assess your deployment needs. Some organizations require all workflows to run inside secure networks with no external dependencies. If this is you, make sure your tool of choice supports self-hosting and is easy to containerize. Both n8n and LangChain support this, but some orchestration platforms or SaaS-only tools may not.
+
+Here's a practical breakdown:
+
+Goal
+
+	
+
+Best tool
+
+	
+
+Why
+
+
+
+
+Quick wins, reporting, and reconnaissance orchestration
+
+	
+
+n8n
+
+	
+
+Visual, easy to integrate, and team-friendly
+
+
+
+
+Agent memory, branching, and custom control
+
+	
+
+LangChain or AutoGen
+
+	
+
+Strong logic and flexible structure
+
+
+
+
+Multi-agent coordination
+
+	
+
+CrewAI
+
+	
+
+Task delegation and supervision logic
+
+
+
+
+Research and experimentation
+
+	
+
+LangChain or Flowise
+
+	
+
+Supports deep prompt chaining and analysis
+
+
+
+
+Enterprise pipelines
+
+	
+
+Hybrid
+
+	
+
+Combine n8n for orchestration and LangChain for depth
+
+Table 2.2 – Practical comparison of AI-agent frameworks for security workflows
+
+You're not constrained to a single framework; many mature security workflows benefit from combining multiple tools. Many of the best security setups I've seen combine them: n8n orchestrates and handles external integrations, while LangChain executes more nuanced decision-making within an agent.
+
+In the end, the tool you choose should serve your thinking, not the other way around.
+
+Summary
+
+If there's one thing I hope you take away from this chapter, it's that agentic security workflows aren't reserved for elite coders or academic research teams. Whether you're building with visual tools such as n8n or crafting granular logic flows in LangChain, the most important thing is aligning your framework with your team's needs, your workflow maturity, and the complexity of the problems you're trying to solve.
+
+We explored the foundational differences between code-first and no-code environments, reviewed how platforms such as CrewAI and AutoGen introduce modular thinking and feedback loops, and compared real-world use cases where each shines. More than anything, we reframed security automation not as a technical afterthought but as a dynamic, adaptable layer of your offensive security operations.
+
+In the next chapters, we'll leave the theory behind and get our hands dirty. We'll walk through setting up your first agentic workflow with n8n, integrating LLMs, chaining tasks, and creating a system that can truly act, not just execute.
+
+Before we move on, reflect on this – which part of your daily security workflow could an agent confidently take over as early as tomorrow?
+
+Let's start building.
+
+Get this book's PDF copy, code bundle, and more
+
+Scan the QR code (or go to packtpub.com/unlock). Search for this book by name, confirm the edition, and then follow the steps on the page.
+
+Note: Have your invoice handy. Purchases made directly from the Packt website don't require an invoice.
+
+table of contents
+close x
+Agentic AI for Offensive Cybersecurity
+
+Orhan Yildirim
+
+Published by Packt Publishing
+queue
+0% complete
+Content Progress 0% completed
+Approx. 10 hours left
+Collapse
+Contents
+Highlights
+Preface
+Part 1: Fundamentals Of Agentic AI
+Chapter 1: Introduction To Agentic AI
+Chapter 2: AI Frameworks For Security Automation
+Overview of AI frameworks for security automation
+Show More Items
+LangChain – strengths and security use cases
+Show More Items
+n8n – no-code automation for security professionals
+Other notable tools – CrewAI, AutoGen, and beyond
+Show More Items
+How to choose the right tool for your use case
+Summary
+Get this book's PDF copy, code bundle, and more
+Part 2: Building And Orchestrating AI Workflows
+Chapter 3: Building Your First AI Workflow In N8n
+Chapter 4: Agentic AI For Attack Surface Management
+Chapter 5: Internal Network And PCI Segmentation Testing
+Chapter 6: Web Application Testing With Agentic AI
+Part 3: Exploitation, Reporting, And Continuous Intelligence
+Chapter 7: Exploitation, Payload Generation, And Reporting
+Chapter 8: Learning, Research, And CTI Agents
+Chapter 9: Scaling And Ethical Considerations
+Chapter 10: Unlock Access To The Code Bundle And The PDF Version
+Other Books You May Enjoy
+Index
+search
+settings
+Chapter 2: AI Frameworks for Security Automation
+queue
+Agentic AI for Offensive Cybersecurity

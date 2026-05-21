@@ -1,0 +1,87 @@
+<h2>Which experience direction feels right?</h2>
+<p class="subtitle">Three approaches to an O'Reilly-powered AI/ML OSINT tool</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="tui" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#0d1117;border-radius:6px;padding:14px;font-family:'Courier New',monospace;font-size:11px;color:#58a6ff;line-height:1.5">
+        <div style="color:#8b949e;margin-bottom:8px">┌─ TOME ─ AI/ML Intelligence Engine ──────────────────┐</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div>
+            <div style="color:#f0883e">● BOOKS FOUND</div>
+            <div style="color:#e6edf3;font-size:10px;margin-top:4px">Ollama in Action<br>Building LLMs<br>LangChain Crash Course<br>Practical AI Security</div>
+          </div>
+          <div>
+            <div style="color:#3fb950">● EXTRACTING...</div>
+            <div style="color:#e6edf3;font-size:10px;margin-top:4px">Ch3: Deploy → port 11434<br>Ch5: API → /api/generate<br>Ch5: Auth → none by default<br>Ch7: Model → /api/show ▓▓░░</div>
+          </div>
+          <div>
+            <div style="color:#bc8cff">● ARTIFACTS</div>
+            <div style="color:#e6edf3;font-size:10px;margin-top:4px">shodan: "ollama" port:11434<br>aimap probe: ✓ queued<br>nuclei: template draft<br>creds: (none documented)</div>
+          </div>
+        </div>
+        <div style="color:#8b949e;margin-top:8px">└──────────────────────────────────────────────────────┘</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — TOME: Rich TUI</h3>
+      <p>Three-panel terminal UI. Books left, live extraction center, generated OSINT artifacts right. Runs in your terminal alongside the rest of the arsenal. Output feeds nuclide.db directly.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="cli" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#0d1117;border-radius:6px;padding:14px;font-family:'Courier New',monospace;font-size:11px;color:#e6edf3;line-height:1.6">
+        <div style="color:#8b949e">$ tome scan "Ollama"</div>
+        <div style="color:#3fb950;margin-top:4px">✓ 4 books found on O'Reilly</div>
+        <div style="color:#3fb950">✓ 12 chapters extracted</div>
+        <div style="color:#3fb950">✓ Intelligence profile built</div>
+        <div style="margin-top:8px;color:#58a6ff">PLATFORM: Ollama v0.x</div>
+        <div>DEFAULT_PORT: 11434</div>
+        <div>DEFAULT_AUTH: none</div>
+        <div>API_PATHS: /api/generate, /api/show, /api/tags</div>
+        <div>DORK: "ollama" port:11434 http.title:"Ollama"</div>
+        <div style="margin-top:8px;color:#8b949e">→ Wrote to nuclide.db (tome_profiles)</div>
+        <div style="color:#8b949e">→ Empire dork queued for JAXEN</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Pipeline CLI</h3>
+      <p>Pure command-line, Unix-philosophy. Slots directly into the visor chain runner as step 0.5. Output is structured JSON → nuclide.db. Invisible when working, loud when it finds something worth knowing.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="web" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#0d1117;border-radius:6px;overflow:hidden">
+        <div style="background:#161b22;padding:8px 14px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #30363d">
+          <span style="color:#58a6ff;font-family:monospace;font-size:12px;font-weight:bold">TOME</span>
+          <span style="color:#8b949e;font-size:11px">AI/ML Intelligence Workstation</span>
+        </div>
+        <div style="display:grid;grid-template-columns:200px 1fr;font-size:10px;font-family:monospace">
+          <div style="background:#0d1117;padding:10px;border-right:1px solid #30363d;color:#8b949e">
+            <div style="color:#f0883e;margin-bottom:6px">PLATFORMS</div>
+            <div style="color:#58a6ff;padding:3px 6px;background:#1f2937;border-radius:3px;margin-bottom:3px">● Ollama</div>
+            <div style="color:#e6edf3;padding:3px 6px;margin-bottom:3px">○ Open WebUI</div>
+            <div style="color:#e6edf3;padding:3px 6px;margin-bottom:3px">○ LangChain</div>
+            <div style="color:#e6edf3;padding:3px 6px;margin-bottom:3px">○ ChromaDB</div>
+            <div style="color:#8b949e;padding:3px 6px">+ Add platform</div>
+          </div>
+          <div style="padding:10px;color:#e6edf3">
+            <div style="color:#3fb950;margin-bottom:6px">3 books · 9 chapters · 2026-05-20</div>
+            <div style="margin-bottom:4px"><span style="color:#bc8cff">port:</span> 11434</div>
+            <div style="margin-bottom:4px"><span style="color:#bc8cff">auth:</span> none (default)</div>
+            <div style="margin-bottom:4px"><span style="color:#bc8cff">api:</span> /api/generate /api/show</div>
+            <div style="color:#f0883e;margin-top:6px">DORK → "ollama" port:11434</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Web Workstation</h3>
+      <p>Browser-based research desk. Sidebar of AI/ML platforms, each with an intelligence card built from O'Reilly. Persistent, shareable, browsable. Lives alongside nuclide-research.com.</p>
+    </div>
+  </div>
+
+</div>

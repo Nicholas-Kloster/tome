@@ -1,0 +1,851 @@
+Chapter 2. Large Language Model Serving
+
+In the previous chapter, we introduced the concept of models, model serving, and common serving paradigms. In this chapter, we shift our focus to the specific challenges and techniques involved in serving LLMs.
+
+One of the most common barriers for those entering the world of model serving is the sheer complexity of modern serving systems. With rapidly evolving model architectures, training algorithms, and tooling—combined with layers of production infrastructure like monitoring, scaling, security, CI/CD pipelines, and service dependencies—the experience can quickly become overwhelming. The result is that many engineers and researchers lose focus, getting bogged down in system details before they can grasp the core principles.
+
+To address this, our approach is to start from the fundamentals. We begin with the bare minimum code required to serve an LLM and build up from there. This helps establish a strong mental model of how token generation works and why serving LLMs poses unique challenges. From this foundation, we’ll gradually expand into more advanced topics like system architecture, performance optimization methods, and infrastructure choices in the remaining chapters. In this chapter, we start with:
+
+The basic architecture of LLMs, including the token generation process and attention mechanisms
+
+What happens under the hood during inference through hands-on code examples
+
+The core concepts behind LLM serving, such as prefill, decode, and key-value (KV) cache reuse
+
+Why understanding these fundamentals is critical to diagnosing bottlenecks and contributing to performance improvements
+
+We’ll then transition into using a modern serving framework—vLLM—to demonstrate how to improve model serving efficiency. Next, using vLLM, we will introduce key serving methods such as streaming and batching, which are essential to achieving production-grade performance.
+
+This is a foundational chapter in the book. Our goal is to equip you with the practical understanding and intuition needed to reason about LLM serving systems. You’ll gain clarity on their behavior, limitations, and optimization opportunities—laying the groundwork for later chapters, where we dive deeper into system design, scalability, and advanced serving optimization strategies.
+
+Throughout the chapter, we provide hands-on examples to help reinforce each concept. And don’t worry—deep mathematical knowledge is not required. Since we are focused on serving rather than training, we’ve abstracted mathematical concepts into intuitive explanations, allowing you to focus on the engineering perspective.
+
+In the next chapter, we’ll take what we’ve learned here and demonstrate how to wrap it into a real-world web service, covering key design decisions and principles.
+
+Inside the Mind of a Transformer
+
+In this section, we’ll introduce the essential concepts behind the Transformer model—specifically from a model serving perspective. Rather than diving into training algorithms or academic theory, we take a top-down, conceptual approach: beginning with the history of LLMs, then walking through the LLM generation process, model architecture, Transformer blocks, and finally the attention mechanism.
+
+LLM Evolution
+
+The evolution of LLMs is not just a historical curiosity—it offers critical insights into the model design choices, architectural patterns, and execution behaviors, which are fundamental to inference and optimization workflows.
+
+Language models have evolved from basic rule-based systems to sophisticated neural networks capable of generating coherent and contextually relevant text. This progress has been driven by advancements in model architectures, the availability of large-scale text datasets, and increasing computational power. Figure 2-1 provides an overview of language model development.
+
+The late 2000s marked a turning point in natural language processing (NLP) with the advent of deep learning (for the sake of keeping this brief, we’ll skip over early rule-based methods and n-gram models here). A major breakthrough came in 2013 with Word2Vec, by Mikolov et al. at Google, which introduced dense vector representations of words in a continuous space. These embeddings captured semantic relationships between words and dramatically advanced the field’s ability to understand language.
+
+Figure 2-1. The history and development of language models (source)
+
+To effectively model the sequential nature of language, recurrent neural networks (RNNs) became popular in 2013. RNNs could capture temporal dependencies and contextual information, making them well-suited for tasks such as sentiment analysis and text generation. To overcome RNNs’ struggles with long-term dependencies, more sophisticated architectures like long short-term memory (LSTM) networks and gated recurrent units (GRUs) were introduced in 2014. These incorporated gating mechanisms and memory cells to better retain and manage information over longer sequences.
+
+Despite these improvements, RNN-based models still had critical limitations. For instance, they processed input sequentially—one time step at a time—making them inherently difficult to parallelize. This constraint hindered their scalability and efficiency on modern hardware like GPUs, and they continued to struggle with capturing long-range dependencies in text.
+
+The introduction of the Transformer architecture, introduced by Google in the 2017 paper “Attention Is All You Need”, revolutionized sequence modeling. By replacing RNNs’ recurrent layers with self-attention mechanisms and positional encoding, Transformers enable parallel processing while efficiently capturing long-range dependencies.
+
+The introduction of the Transformer architecture sparked the emergence of two influential model families: Bidirectional Encoder Representations from Transformers (BERT) and the Generative Pre-trained Transformer (GPT). A pivotal innovation was the shift from training models from scratch for each task to pre-training on large-scale, unlabeled text using unsupervised learning objectives. This pre-training phase enables models to acquire a broad, generalizable understanding of language, which can then be fine-tuned for specific downstream tasks.
+
+BERT, built on a bidirectional encoder, reads text in both directions simultaneously. This makes it particularly effective for understanding context and performing tasks such as text classification or generating contextual embeddings. In contrast, GPT models are based on a unidirectional decoder, generating text by predicting the next token given the preceding context—an approach well-suited for generative tasks.
+
+Over time, the GPT architecture has demonstrated exceptional versatility across a wide range of applications, including text generation, summarization, translation, and question answering. Researchers have discovered that scaling up both model size and training data significantly enhanced performance. This scaling unlocked capabilities like few-shot and even zero-shot learning, where models can perform new tasks with little or no additional training.
+
+This trend is evident in the rapid evolution of model scale: GPT-1 had 117 million parameters, while GPT-3 grew to 175 billion within two years. More recently, DeepSeek R1 reached 671 billion parameters. As a result, the term large language model emerged to describe these powerful pre-trained models characterized by tens or even hundreds of billions of parameters.
+
+With the brief historical overview out of the way, we now turn to a more technical discussion of Transformer architecture. If you are interested in a deeper exploration of LLM history and development, the paper “A Survey of Large Language Models” offers a comprehensive and insightful read.
+
+NOTE
+
+In this chapter, LLM and Transformer specifically refer to decoder-only Transformer architectures—models that utilize only the decoder stack from the original Transformer design introduced and popularized by OpenAI’s 2018 paper, “Improving Language Understanding by Generative Pre‑Training”.
+
+THE DEFINITION OF LLMS WILL KEEP EVOLVING
+
+As of the time of writing, the term LLM typically refers to generative, decoder-only Transformer models. However, it’s important to understand that this definition is not static—it continues to evolve alongside advancements in AI research and deployment.
+
+At its foundation, LLMs are built on the concept of large-scale language modeling. But what qualifies as “large” has changed dramatically over time, as have the architectures, capabilities, and training methodologies involved. For instance, in 2018, models like BERT—with a few hundred million parameters—were considered large. By 2023–2024, models such as GPT-4 and Claude 3 are estimated to scale to trillions of parameters and include multi-modal capabilities.
+
+Alongside this growth, the expectations for LLMs have expanded significantly. They are no longer judged solely by their ability to generate coherent text, but also by their capacity to follow complex instructions, interact with tools, and exhibit human-aligned behavior.
+
+Therefore, readers should remain mindful that both the definitions and the expectations surrounding LLMs will continue to evolve as the field progresses.
+
+The Autoregressive Nature of Transformers
+
+In this section, we’ll take a high-level, conceptual look at how a Transformer performs text generation given an input prompt.1 A defining characteristic of LLMs is their autoregressive nature: they generate text one token at a time, with each new token predicted based on all previously generated tokens. This step-by-step process allows the model to maintain coherence and context, ensuring that each word aligns meaningfully with what has already been generated. Autoregressive generation also mirrors how language is naturally constructed—progressively, with each word depending on prior context. See Figure 2-2 for an illustration of this process.
+
+Figure 2-2. Transformers generate tokens one at a time: the output token will be appended to the input sequence as a prompt for the next token generation
+
+In Figure 2-2, you can see how a Transformer-based LLM generates text in an autoregressive manner—predicting one token at a time, each conditioned on the prompt and all previously generated tokens:
+
+In step 1, the model receives the initial prompt, “Write a short introduction about the US capital city,” and generates the first output token: Washington.
+
+In step 2, this generated token is appended to the original input, and the updated sequence is fed back into the model to produce the next token: D.C.
+
+In step 3, the prompt now includes both Washington and D.C., allowing the model to generate the next token: is.
+
+In step 4, the sequence continues with the addition of is, leading the model to generate the.
+
+This iterative process continues until the model encounters a stopping condition—such as reaching a maximum length or generating a special stop token—gradually building the output sequence token by token.
+
+Decoder-Only Transformer Architecture
+
+Now that you’ve seen how a Transformer model generates text, let’s take a closer look inside the Transformer LLM box shown in Figure 2-2.
+
+In this section, we’ll explore the underlying architecture of decoder-only Transformers, which power most modern LLMs. In addition to reviewing the high-level components and flow, we’ll also examine the architecture of a real-world model—Qwen 2.5—to help build your practical intuition for understanding and analyzing LLM structures in practice.
+
+WHY DEMONSTRATE DECODER-ONLY TRANSFORMER ARCHITECTURE?
+
+There are many architectural variants built on the Transformer framework. While these models all share the same foundational principle—stacked Transformer blocks with self-attention—they differ in how their components are structured and applied.
+
+In this book, we focus on the decoder-only Transformer architecture because it is the most widely adopted design for models that perform generative tasks, such as GPT, Llama, and Qwen. If you are interested in exploring other Transformer architectures, such as encoder-decoder models used in tasks like translation and summarization, you can start with the blog “Transformer-Based Encoder-Decoder Models”.
+
+Model architecture
+
+In Figure 2-3, you see a high-level view of a typical decoder-only Transformer architecture. It shows how a prompt like “Write a short introduction about the US capital city” is processed by the model to generate a token such as Washington. The model can be conceptually broken down into three key components: tokenizer, Transformer (decoder) blocks, and language modeling (LM) head.
+
+Figure 2-3. Decoder-only Transformer model architecture: the model is made up of a tokenizer and embedding, a list of transformer blocks, and an LM head
+
+Let’s examine these components one by one:
+
+Step 1: Tokenizer and embedding
+
+The first step in the LLM token generation is handled by the tokenizer, which takes raw input text (prompt) and does the following:
+
+Breaks it into discrete tokens based on a fixed vocabulary.
+
+Converts those tokens into token IDs, which are numerical representations. These IDs map to the actual text in the vocabulary used in step 1.
+
+Maps those token IDs into vector embeddings using an embedding layer, preparing the input for the Transformer blocks.
+
+This tokenization and embedding step ensures the model can interpret and process human-readable input in a form that the following Transformer blocks will understand.
+
+To better understand the tokenization process, you can explore it using OpenAI’s tokenizer tool. For example, given the input text “Write a short introduction about the US capital city,” the tool breaks it into 11 tokens: ["\"", "Write", "a", "short", "introduction", "about", "US", "capital", "city", "\""]. It then maps each token to a corresponding token ID: [1100, 10930, 261, 4022, 22575, 1078, 290, 2952, 9029, 5030, 693]. Ultimately, each token ID is mapped to an embedding vector (a numerical array). For example, token ID 1100 might correspond to a vector like [-0.12, 0.55, 0.98, ...].
+
+Step 2: Transformer (decoder) blocks
+
+The heart of the model lies in a stack of decoder blocks. These blocks are where most of the computation (and learning) happens during model serving and training.
+
+The decoder blocks are stacked (for example, 12, 24, or more layers), allowing the model to build up a rich contextual understanding of the prompt and previous outputs—token by token—before predicting the next one.
+
+The outputs of these decoder blockers are hidden states—contextualized representations of the input tokens. More specifically, they are tensors of shape [N, d], where N equals the number of tokens in the input sequence and d equals the hidden state size (for example, 768, 2048, 4096, depending on the model).
+
+These hidden states (tensors) are then passed to the next component—the LM head. In most cases, only the final hidden state, corresponding to the last token in the sequence, is used to predict the next token in the output.
+
+Step 3: Language modeling (LM) head
+
+When the LM head generates the output token, it primarily does two things:
+
+First, it maps the hidden states from transformer blocks to vocabulary logits—a probability distribution for the tokens in the token vocabulary.
+
+Second, it selects the output token based on the vocabulary logits (probabilities). Usually, the token with the highest probability is selected as the next output. For example, in Figure 2-3, the LM head selects Washington, followed by alternatives like London, New York, and Cat.
+
+With this foundational understanding in place, let’s now examine the architecture of a real-world model—Qwen 2.5—with the following code as a concrete reference:
+
+model_name = "Qwen/Qwen2.5-0.5B"
+# load Qwen2.5 
+model = AutoModelForCausalLM.from_pretrained(
+   model_name,
+   trust_remote_code=True,
+   device_map="auto"
+)
+
+# Print all model configuration parameters
+config = model.config
+print("\n=== Model Configuration Parameters ===")
+
+# Architecture parameters
+print("\nArchitecture Parameters:")
+# Size of the hidden layers
+print(f"Hidden size: {config.hidden_size}") 
+# Number of transformer blocks
+print(f"Number of layers: {config.num_hidden_layers}") 
+# Number of attention heads
+print(f"Number of attention heads: {config.num_attention_heads}")
+# Size of the MLP intermediate layer
+print(f"Intermediate size: {config.intermediate_size}")  
+# Tokenizer parameters
+print("\nTokenizer Parameters:")
+# Size of the vocabulary
+print(f"Vocabulary size: {config.vocab_size}") 
+# Maximum sequence length
+print(f"Maximum position embeddings:{config.max_position_embeddings}") 
+
+# Model-specific parameters
+print("\nModel-specific Parameters:")
+for key, value in config.to_dict().items():
+   if key not in ['architectures', 'model_type', 'torch_dtype']:
+       print(f"{key}: {value}")
+
+Before working with a model—especially an LLM—it’s a common and recommended practice to inspect its configuration. A model’s configuration contains valuable details about its architecture, such as the number of layers, hidden dimensions, attention heads, vocabulary size, and more. Understanding this information helps you estimate the compute resources required (such as GPU memory), choose appropriate model serving strategies (like quantization or batching), and plan for performance optimization (for instance, layer-wise parallelism or model sharding).
+
+Here is Qwen 2.5’s model configuration:
+
+>> Architecture Parameters:
+Hidden size: 896
+Number of layers: 24
+Number of attention heads: 14
+Intermediate size: 4864
+
+>> Tokenizer Parameters:
+Vocabulary size: 151936
+Maximum position embeddings: 32768
+
+>> Model Size:
+Total parameters: 494,032,768
+
+>> Model-specific Parameters:
+vocab_size: 151936
+max_position_embeddings: 32768
+ .. .. ..
+
+By inspecting the configuration up front, you can make better decisions about deployment strategies—like whether to use quantized models, distillation, multi-GPU setups, or even offloading techniques.
+
+Transformer (decoder) block
+
+Next, let’s zoom into the Transformer blocks. Decoder blocks are the most critical and computation-heavy layers in the LLM architecture (Figure 2-4).
+
+Figure 2-4. A Transformer (decoder) block is composed of a self-attention layer and a feedforward layer
+
+In Figure 2-4, you can see that a Transformer block contains two primary components:
+
+Self-attention layer
+
+This is the novel component of Transformer models, which incorporate contextual information by dynamically correlating input tokens based on their meaning and relative positions. Calculating attention (for context information) is crucial in LLMs, since context allows models to understand the meaning of words and sentences based on surrounding information, reducing ambiguity and enabling coherent interpretation.
+
+In simple terms, the self-attention layer allows the model to consider all previous tokens in the prompt and assign different levels of importance to each when generating the next word. In the next section, we’ll take a closer look at how attention works.
+
+Feedforward neural network (FFN)
+
+FFN refines the understanding of a given token into a stronger representation: the contextual meaning of a token, usually a dense, high-dimensional vector (for example, 768 or 4,096 dimensions). This component applies per-token transformation. It leverages the context information from the attention layer, incorporates all the knowledge it learned during training, and provides a refined token representation before making a prediction.
+
+The following code shows how to inspect the decoder layer of the Qwen 2.5 model:
+
+print("\nModel Structure:")
+def print_module_structure(module, prefix=''):
+   for name, child in module.named_children():
+       # Skip certain internal modules for clarity
+       if name in ['_orig_mod', 'wrapped_model']:
+           continue
+
+       # Print the current module
+       print(f"{prefix}{name}: {type(child).__name__}")
+
+       if "Qwen2Attention" in name.lower():
+         print(f"\nFound attention module: {name}")
+         print(f"Type: {type(module).__name__}")
+
+         # Print attention-specific attributes
+         if hasattr(module, 'num_heads'):
+             print(f"Number of attention heads: {module.num_heads}")
+         if hasattr(module, 'head_dim'):
+             print(f"Head dimension: {module.head_dim}")
+         if hasattr(module, 'hidden_size'):
+             print(f"Hidden size: {module.hidden_size}")
+         if hasattr(module, 'rotary_emb'):
+             print(f"Has rotary embeddings: {module.rotary_emb is not None}")
+
+With the code, you can clearly see the structure of the decoder layer, including attention:Qwen2Attention, mlp:Qwen2MLP, and layernorm:Qwen2RMSNorm:
+
+Model Structure:
+model: Qwen2Model
+  embed_tokens: Embedding
+  layers: ModuleList
+    0: Qwen2DecoderLayer
+      self_attn: Qwen2Attention
+        q_proj: Linear
+        k_proj: Linear
+        v_proj: Linear
+        o_proj: Linear
+      mlp: Qwen2MLP
+        gate_proj: Linear
+        up_proj: Linear
+        down_proj: Linear
+        act_fn: SiLU
+      input_layernorm: Qwen2RMSNorm
+      post_attention_layernorm: Qwen2RMSNorm
+    1: Qwen2DecoderLayer
+      self_attn: Qwen2Attention
+    .. .. ..
+
+Knowing this decoder layer structure is crucial when planning model optimization or serving. For example, attention-heavy blocks may benefit from fused attention kernels or custom CUDA implementations, which we will discuss in the following chapters.
+
+Capture Token Context by Calculating Attention
+
+Context is critical for language processing tasks. For example, given the sentence “I saw a dog chasing a squirrel, and it climbed up the tree” without context, it’s unclear whether it refers to the dog or the squirrel.
+
+Ever since the 2017 publication of “Attention Is All You Need”, self-attention has become the main attention mechanism through which Transformers allow each token in a sequence to “look at” other tokens and weigh their relevance when computing its own representation.
+
+For example, when an LLM processes the prompt “Write a short introduction about the US capital city,” at the token capital, the self-attention allows the model to:
+
+Look back at US to understand that capital is referring to a country’s capital, not financial capital.
+
+Consider introduction as a direction to keep the writing concise and general.
+
+Use Write to know the overall task is instructional.
+
+Attention calculation
+
+In a nutshell: for each token, the LLM computes three vectors: query (Q), key (K), and value (V). The attention score of a token is calculated by taking the dot product between the query of the token and the keys of all the tokens of the input sequence, scaling the result, applying a softmax to get weights, and then using those weights to compute a weighted sum of the value vectors. This result becomes the updated representation of the token, enriched with context from the entire sequence. The attention mechanism is summarized by the following equation:
+
+Attention
+(
+𝑄
+,
+𝐾
+,
+𝑉
+)
+=
+softmax
+(
+𝑄
+𝐾
+𝑡
+𝑑
+𝑘
+)
+𝑉
+
+For a detailed explanation of this calculation, please refer to section 3.2.1, “Scaled Dot-Product Attention,” in “Attention Is All You Need”.
+
+Multi-head attention
+
+To further enhance the model’s understanding, instead of doing one attention calculation per token, the model performs multiple attention calculations for the same token, called heads, each with its own Q/K/V projections. This allows the model to capture different types of relationships (for example, syntactic, positional, and semantic) in parallel. The outputs from all heads are then concatenated and passed through a linear layer to produce the final attention output. Figure 2-5 illustrates a highly abstracted view of the multi-head self-attention mechanism described here.
+
+Figure 2-5. Conceptual diagram of a multi-head self-attention calculation
+
+Now, let’s see how attention works in practice. In the following code, for the input sequence “write a short introduction about the US capital city,” we use the BertViz library’s head view class to visualize the attention of each decoder layer of the Qwen model. You can try this code yourself to look at how different attention heads in a layer connect different tokens:
+
+text = "write a short introduction about the US capital city"
+model_name = "Qwen/Qwen2.5-0.5B"
+tokenizer = AutoTokenizer.from_pretrained(model_name, output_attentions=True)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name, output_attentions=True
+).eval().cuda()
+
+# Tokenize input
+inputs = tokenizer(text, return_tensors="pt").to(model.device)
+
+# Generate outputs with attention
+with torch.no_grad():
+   outputs = model(**inputs, output_attentions=True)
+
+# Get attention weights
+attention = outputs.attentions
+
+# Use bertviz and attention weights to visualize 
+# the relations between the input tokens
+tokens = tokenizer.convert_ids_to_tokens(inputs['input_ids'][0])
+head_view(attention, tokens)
+
+By specifying output_attentions=True, we could fetch the attention weight of the given model input, “write a short introduction about the US capital city,” after token generation. And then we could visualize tokens relations in each decoder layer by head_view(attention, tokens). See the output graph in Figure 2-6.
+
+Each line in Figure 2-6 represents an attention connection between two tokens—the line thickness indicates the strength of the attention weight, while color distinguishes different attention heads. By examining these connections, we can observe which tokens a given token attends to most strongly. In this example, the token capital shows strong attention toward US and write, suggesting these tokens are influential in shaping its contextual representation at layer 10.
+
+Figure 2-6. Multi-head attention visualization for the “capital” token in Transformer layer 10
+
+It’s important to note that the attention computation described here is intentionally high level and conceptual. We’ve abstracted away many implementation details—such as token and embedding dimensions, matrix shapes within each attention head, and the exact mechanics of output aggregation. This simplification is deliberate: for ML engineers focused on model serving and optimization, the current level of understanding—centered on how attention works and how tokens are generated in a Transformer—is typically both sufficient and practical.
+
+However, if you are interested in exploring the attention mechanism in greater depth, I highly recommend “The Illustrated Transformer” blog, which walks through attention calculations in an intuitive, non-mathematical way, as well as books such as Hands-On Large Language Models and Build a Large Language Model (From Scratch), which offer detailed and comprehensive explanations of transformers and attention.
+
+YOU JUST NEED TO GRASP THE TRANSFORMER CONCEPT—NOT THE MATH
+
+Many people find the mathematical details of attention and Transformers intimidating—especially the matrix-heavy computations often emphasized in academic papers. However, for ML engineers focused on LLM serving, it’s both practical and—often—preferable to understand the attention mechanism conceptually, without diving deep into the math.
+
+While a detailed understanding of self-attention can be valuable, it is not a prerequisite for effectively serving or optimizing LLMs. From a serving perspective, what’s most important to know is that attention is compute-intensive, especially during the prefill phase (which we will discuss shortly), and that its memory and latency costs scale with input sequence length. This level of understanding is critical when you’re tuning inference performance, implementing KV caching, or distributing workloads across GPUs.
+
+Now that you’ve built a solid understanding of LLM architecture and the autoregressive generation process, let’s shift to a more practical perspective. In the next section, we’ll walk through how to execute LLM generation step by step, using hands-on code examples to illustrate each stage of the process.
+
+Executing LLM Generation: A Step-by-Step Walkthrough
+
+In this section, we’ll demonstrate the core internal LLM serving concepts, such as KV cache, prefill, and decode, by showing you behind the scenes of how a LLM generates tokens—step by step.
+
+Our goal is not to teach Transformer theory but to build a serving-oriented mental model of how an LLM executes during inference—because this execution pattern is what drives almost every design decision in LLM serving systems.
+
+Please note that in our demo code, we’ll use a single-request and single-sequence example for demonstration purposes; the code example is not recommended in production settings. Later chapters will show how serving systems batch, stream, and optimize this same execution pattern at scale.
+
+As we walk through LLM generation line by line, pay attention to how execution unfolds over time, not just what each line of code does. Concepts introduced here—such as token-level execution, prefill versus decode, and cached state—will reappear throughout the book when we discuss batching, streaming, KV cache optimization, and serving frameworks like vLLM and SGLang.
+
+By the end of this walkthrough, you’ll have a clear and practical understanding of how LLM inference works. If some details feel unfamiliar on the first pass, that’s OK. The purpose of this section is to give you intuition; we’ll revisit and operationalize these ideas in later chapters.
+
+Run the Qwen Model
+
+To get started easily, let’s run the Qwen 2.5 model using the Hugging Face pipeline library. This is the simplest way to use an LLM, as the pipeline object abstracts away much of the underlying complexity and provides a straightforward generator() API for text generation:
+
+# Initialize the text generation pipeline
+generator = pipeline('text-generation', model='Qwen/Qwen2.5-0.5B')
+# Define your prompt
+prompt = "Write a short introduction about the US capital city."
+# Generate text
+generated_text = generator(prompt, max_length=50, num_return_sequences=1)
+# Print the generated text
+print(generated_text[0]['generated_text'])
+
+This code loads the Qwen 2.5 model and generates text using genera⁠tor​(prompt, ...). For the input prompt “Write a short introduction about the US capital city,” the output is:
+
+Write a short introduction about the US capital city. 
+The United States of America is the largest country in 
+the world by area, .. .. ..The city is also home to many 
+other important institutions, including the National Mall, 
+the White House Museum, and the National Archives.
+Model Prediction, Line by Line
+
+Now, let’s take a look at what happens under the hood of the generator() function. Before diving into the code, let’s first revisit the token-by-token generation workflow, illustrated in Figure 2-7.
+
+Figure 2-7 highlights two key aspects of LLM generation. First, the LLM generates one token at a time; second, each newly generated token is appended to the previous input sequence to form the new input for the next prediction step.
+
+Figure 2-7. The token-by-token generation workflow in LLMs
+
+Now, let’s examine how this process is implemented. First, we need to specify the model and load tokenizer. In Example 2-1, instead of using pipeline, we use Auto​Mod⁠elForCausalLM to load the Qwen 2.5 model. It offers full control over the generation configuration, inputs, and decoding strategies—making it the ideal choice when we want to manually prepare inputs and handle the generation process step by step.
+
+Example 2-1. Implementing Qwen token generation, token by token
+# (1) Load tokenizer and model
+model_name = "Qwen/Qwen2.5-0.5B"
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+model = (
+    AutoModelForCausalLM.from_pretrained(
+        model_name, trust_remote_code=True,
+    ).to("cuda" if torch.cuda.is_available() else "cpu")
+)
+
+Next, define the input prompt:
+
+# (2) Define the input prompt
+prompt = """The history of human … … … How might the next wave of 
+communication tools shape our relationships, societies, and sense 
+of identity?"""
+
+Now, it’s time to tokenize the prompt—that is, convert it to an input format that the model understands. idx = tokenizer(prompt,..) tokenizes the prompt as the initial model input:
+
+# (3) Convert (tokenize) prompt to the input format that model understands
+max_new_tokens = 100
+# tokenize the input prompt for the first output token
+# PS: prompt is the initial input sequence for LLM generation
+idx = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+start_time = total_time = time.time()
+times = []
+
+Then we start the main generation loop, generating tokens one by one. Notice that outputs = model(idx_cond), at step 4(B), runs the Qwen model and produces candidates for the new token, given the input idx_cond, while logits = outputs.logits gets the logits, or raw prediction scores, for each token prediction:
+
+# (4) Main generation loop - generate tokens one by one
+for _ in range(max_new_tokens):
+   # (A) Set the current context for generation
+   idx_cond = idx
+   with torch.no_grad():
+       # (B) Generate predictions (token candidates) for next token
+       outputs = model(idx_cond)
+       # Get the logits (raw prediction scores) for each token prediction
+       logits = outputs.logits
+
+Next, the model selects the next token from the predictions it just generated:
+
+# (C) Select next token from the predictions generated in step (B)
+   logits = logits[:, -1, :] #  Select only the logits for the last token
+   # Convert logits to probabilities using softmax
+   probas = torch.softmax(logits, dim=-1)    
+   # Sample the next token from the probability distribution of the 
+   predicted tokens from step (B)
+   idx_next = torch.multinomial(probas, num_samples=1)
+   print("Next Token is:", tokenizer.decode(idx_next[0])
+   time_cost = time.time() - start_time
+   times.append(time_cost)
+
+Append the new token to the input sequence using idx = torch.cat((idx, idx_next), dim=1). Finally, check that an end-of-sequence token was generated; idx also holds the final output text:
+
+  # (D) Append the new token to the input sequence
+   idx = torch.cat((idx, idx_next), dim=1)
+
+   # (E) Check if end-of-sequence token was generated
+   if idx_next.item() == tokenizer.eos_token_id:
+       print("\n[Generation completed - EOS token reached]")
+       break
+
+Finish by decoding the entire generated sequence:
+
+# (5) Decode the entire generated sequence
+generated_text = tokenizer.decode(idx[0], skip_special_tokens=True)
+
+You can try out this code yourself in the ch2_Workthrough_LLM_execution.ipynb notebook. In addition to demonstrating the code, we also tracked the latency of each token during the generation process. The demo generated 100 tokens in 9.1205 seconds—averaging approximately 0.09 seconds per token. See Figure 2-8 for details.
+
+Figure 2-8. Time distribution for each token in the text generation example
+
+You may also notice a pattern in Figure 2-8: except for the first token, the per-token generation time tends to gradually increase. This is expected—since each newly generated token is appended to the input sequence, the model must process a longer context with every step. As a result, both computation time and resource usage grow with each token.
+
+As machine learning engineers, we can quickly recognize the inefficiency shown in Figure 2-9: the model recomputes attention for all previous tokens every time a new token is generated. This repetitive computation over known tokens is costly and unnecessary. Can we avoid recalculating the same attention for previous tokens and instead focus computation on the newly generated one?
+
+Figure 2-9. The LLM reprocesses the entire input sequence each time to generate a new token, leading to increased computation as the sequence grows
+
+This brings us to the next topic—the concept of KV cache.
+
+Enable the KV Cache to Boost Performance
+
+Now, imagine if you could cache the intermediate results from all previous tokens—specifically, the key and value vectors computed by the attention mechanism. Then, during each new token generation step, you would only need to process the newly added token, rather than recomputing attention for the entire sequence. That’s what enabling the KV cache does: this optimization stores the attention keys and values computed at each layer for previously generated tokens, allowing the model to skip redundant computations during decoding (see Figure 2-10).
+
+As shown in Figure 2-10, the KV cache shifts the LLM calculation from full-sequence recomputation to an incremental, cache-augmented workflow—trading increased memory usage for significant compute savings. This technique dramatically reduces redundant computation and enables much faster token generation.
+
+Figure 2-10. Accelerating LLM generation with KV caching: only the new token is processed while previously computed key-value pairs are reused, reducing redundant computation
+
+With this understanding in mind, let’s look at how KV caching can be used with the code in Example 2-2.
+
+Example 2-2. Implementing Qwen text generation, token by token, with KV caching enabled
+# (1) Define key/value cache for faster generation
+past_key_values = None
+
+for _ in range(num_interations):
+   print("input_ids size: " + str(input_ids.size()))
+   with torch.no_grad():
+       outputs = model(input_ids=input_ids,
+         # (2) Use KV-cache from previous iteration
+         past_key_values=past_key_values,
+         # (2) Enable KV caching
+         use_cache=True,
+         max_new_tokens = 100,
+         min_new_tokens= 100)
+
+
+       logits = outputs.logits
+       # (3) Update KV Cache
+       past_key_values = outputs.past_key_values
+       torch.cuda.synchronize()
+
+   logits = logits[:, -1, :]
+   probas = torch.softmax(logits, dim=-1)
+   generated_token_id = torch.multinomial(probas, num_samples=1)
+  
+   # (4) Update input_ids with only the new token (using KV-cache)
+   # Note: Not concatenating with previous tokens due to KV-cache
+   input_ids = generated_token_id  
+   idx = torch.cat((idx, generated_token_id), dim=1)
+
+   if generated_token_id.item() == tokenizer.eos_token_id:
+       print("\n[Generation completed - EOS token reached]")
+       break
+
+The biggest differences between Examples 2-1 and 2-2 are:
+
+Example 2-2 only uses the newly generated token, generated_token_id, as the model generation input for the next token: input_ids = generated_token_id and outputs = model(input_ids=input_ids, .. ).
+
+In Example 2-2, besides passing in the token, we also specify the KV cache as the model generation input, see outputs = model(input_ids=input_ids,past_​key_values=past_key_values, ..) at step 2.
+
+Step 3 of Example 2-2 updates the KV cache after each token generation with past_key_values = outputs.past_key_values.
+
+Our total execution time for Example 2-2 was 3.1416 seconds. Figure 2-11 compares the execution times over 100 tokens of Example 2-1 (left, no cache) and Example 2-2 (with cache).
+
+Figure 2-11. Token generation time comparison: without versus with KV caching enabled
+
+Without caching, the generation time increases steadily as the model reprocesses the growing input sequence at each step. In contrast, enabling the KV cache significantly reduces compute time by reusing previously computed key-value pairs—resulting in more stable and efficient generation speed after the first token.
+
+With this example, you should now have a clear, hands-on understanding of how effective the KV cache is in improving LLM generation performance—both in terms of latency and throughput.
+
+In practice, many advanced techniques have been proposed to design, manage, and optimize KV caches more efficiently. With the foundational intuition you’ve gained here, you’ll be better equipped to explore those methods and apply them in your own work. We’ll also cover KV cache optimization strategies in more detail in Chapters 6 and 7, focused on performance tuning.
+
+The Prefill and Decode Phases
+
+Now that you’ve seen how tokens are generated, you’re ready to explore the next two phases, prefill and decode. These terms are widely used in the LLM serving domain, particularly in the context of performance optimization and scalability. Figure 2-12 illustrates the concept.
+
+Let’s look at these phases one by one:
+
+Prefill phase
+
+In the prefill phase, also called prompt processing, the model processes the entire input prompt at once. This phase is compute-intensive because attention is computed across all tokens in the prompt (quadratic complexity with respect to sequence length).
+
+Decoding phase
+
+In the decoding phase, also called token-by-token generation, the model generates one token at a time and repeats for every new token. The sequence grows, but the (attention) computation typically focuses only on the most recent token.
+
+As Figure 2-12 shows, the prefill phase occurs when the user submits the prompt “Write a short introduction about the US capital city.” During this phase, the model processes all tokens in the prompt simultaneously, leveraging parallelism for relatively efficient computation.
+
+Once the prefill phase is complete, the decoding phase begins. This is where the model generates tokens one at a time to form a response, such as Washington, D.C., is, and the.
+
+Figure 2-12. The prefill and decode phases in LLM text generation
+
+Figure 2-13 compares the difference in processing time between the prefill and decoding phases when KV caching is enabled. The first bar on the left represents the time taken to generate the first token. This corresponds to the prefill phase, which is significantly more time-consuming because the model must process the entire prompt at once. In contrast, the following bars (representing the decoding phase) show much shorter and more consistent token-generation times, as the model generates one token at a time using the cached information from earlier steps.
+
+Figure 2-13. Token generation time in the prefill and decoding phases of Example 2-2 (with KV cache enabled)
+WHY DOES LEARNING ABOUT THE PREFILL AND DECODING PHASES MATTER?
+
+Understanding the difference between prefill and decoding phases—and their respective compute patterns—is critical for making informed optimization and resource-planning decisions in LLM serving. The prefill phase is compute-intensive due to parallel processing multiple prompt tokens; the decoding phase is memory-intensive, primarily due to the frequent loading of model weights and the growing size of the KV cache. Knowing which phase dominates in your use case helps you target the right bottlenecks.
+
+For example, in scenarios involving long prompts, such as processing a 500+ page PDF, the prefill phase becomes expensive. On the other hand, if you’re working with short prompts and long generations—such as in chatbot replies or story generation—the decoding phase becomes the bottleneck.
+
+By distinguishing between these phases, you can better align your system design and optimization efforts with the performance characteristics of your specific application. We will discuss phase-specific optimization techniques in Chapters 6 and 7.
+
+In this section, we demonstrated how to implement inference from scratch—manually loading the model and generating tokens step by step. While this approach provides valuable insight into how LLMs work under the hood, real-world applications typically rely on serving frameworks rather than custom-built inference pipelines. In the remainder of this chapter, we’ll use the vLLM serving framework as a practical example to show you how to execute LLM inference with production-ready libraries.
+
+Run the LLM with a Serving Framework
+
+Model serving frameworks—such as vLLM and SGLang—are purpose-built systems designed to load pre-trained language models and expose them through APIs (typically REST or gRPC) for real-time or batch inference. While training frameworks like PyTorch and TensorFlow focus on model development and gradient-based learning, serving frameworks are optimized for efficient, scalable, and low-latency inference.
+
+But serving frameworks offer far more than just the ability to run inference. They provide essential capabilities such as:
+
+Efficient decoding with KV-cache reuse
+
+Request scheduling (for example, batching or micro-batching)
+
+Support for multi-user concurrency
+
+Token streaming, cancellation, and interruption handling
+
+A well-designed serving framework (like vLLM) also continually integrates the latest research optimizations—such as paged attention and speculative decoding—while abstracting away low-level infrastructure concerns. This allows developers to focus on building applications rather than re-implementing inference logic for each model architecture or chasing the latest academic papers about improvements.
+
+In this section, we’ll walk you through how to use vLLM to load and serve an LLM model. You can compare this with the manual inference implementation we explored in the previous section to appreciate the practical advantages of using a serving framework.
+
+Serve the LLM (Qwen) with vLLM
+
+Serving an LLM with vLLM is quite simple and efficient. With just a few lines of code, you can load a model such as Qwen 2.5 and run inference. Here’s a basic example:
+
+import time
+from vllm import LLM, SamplingParams
+
+model_name = "Qwen/Qwen2.5-0.5B"
+
+# Load model with vLLM
+llm = LLM(model=model_name, dtype="float16")
+
+# Define the prompt.
+prompt = """You are an expert AI historian writing a 
+detailed chapter for a book titled "The Evolution of 
+Human-AI Collaboration." … … Write in a formal tone, 
+with rich detail and examples in each era."""
+
+# Create inference parameters.
+inference_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=128)
+
+# Run token (text) generation with prompt and inference parameters.
+outputs = llm.generate([prompt], inference_params)
+
+# Print the results.
+for output in outputs:
+ print(f"Generated text: {output}")
+
+As you can see, the LLM() and generate() functions abstract away much of the complexity, enabling quick experimentation with LLMs. Despite its simplicity, vLLM provides extensive configuration options to fine-tune performance and behavior to meet your specific application needs. Here’s an example with more advanced configuration:
+
+# Configure Model Loading
+model = LLM(
+   model="Qwen/Qwen-7B",
+   # Memory management
+   swap_space=16,  # CPU swap space size in GB
+   max_model_len=4096,  # Maximum model length
+   # PagedAttention settings
+   block_size=16,  # Block size for PagedAttention
+   enable_prefix_caching=True,  # Enable prefix caching
+   # KV cache management
+   max_num_sequences=256,  # Maximum number of sequences
+   max_sequence_length=4096,  # Maximum sequence length
+   # Performance optimizations
+   enable_chunked_prefill=True,  # Enable chunked prefill
+   enable_cuda_graph=True,  # Enable CUDA graph
+   # System settings
+   worker_use_ray=False,  # Use Ray for distributed serving
+   disable_custom_all_reduce=False,  # Disable custom all-reduce
+)
+
+# Configure Model Inference Parameters
+sampling_params = SamplingParams(
+   temperature=0.7,  # Controls randomness (0.0 = deterministic)
+   top_p=0.9,  # Nucleus sampling parameter
+   top_k=50,  # Top-k sampling parameter
+   max_tokens=100,  # Maximum tokens to generate
+   stop=["\n", "###"],  # Stop sequences
+   frequency_penalty=0.1,  # Frequency penalty
+   presence_penalty=0.1,  # Presence penalty
+   repetition_penalty=1.1,  # Repetition penalty
+   skip_special_tokens=True,  # Skip special tokens in output
+)
+
+vLLM follows the parameter conventions of the OpenAI text completion API, making it familiar and easy to adopt. You can find a full list of model-loading configuration options in the vLLM GitHub repository.
+
+Performance Comparison: vLLM Versus Hugging Face Transformers
+
+In addition to convenience, vLLM delivers substantial performance improvements. In many benchmarks, it achieves 10 to 20 times higher throughput than the Hugging Face .generate() API (Transformer library). Let’s run a quick side-by-side comparison using the same prompt and model. Here is the Hugging Face code:
+
+# Run model inference with Hugging Face library
+# Load model and tokenizer in Hugging Face library   
+tokenizer = AutoTokenizer.from_pretrained(
+    "Qwen/Qwen2.5-0.5B",
+    trust_remote_code=True,
+)
+model = AutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen2.5-0.5B",
+    device_map="auto",
+    trust_remote_code=True,
+)
+
+start_time_basic = time.time()
+# Create the model prediction pipeline
+generator = pipeline('text-generation', model=model, tokenizer=tokenizer)
+# Generate prediction with prompt
+outputs_basic = generator(prompt, max_length=128, temperature=0.8, top_p=0.95)
+end_time_basic = time.time()
+
+vLLM takes 1.12 seconds, while the Hugging Face library takes 19.58 seconds. That’s a 17x speedup on a single prompt—and the performance gap only widens when you scale up to concurrent or batched inference.
+
+BEST PRACTICE: START SIMPLE, THEN OPTIMIZE
+
+In real-world development, teams can prototype with Hugging Face Transformers for ease of use, then migrate to frameworks like vLLM for production usage and fine-tune the serving configuration for better latency, throughput, and concurrency. By allowing you to tune its serving parameters to fit your specific model and use case, frameworks like vLLM offer enterprise-grade performance with minimal engineering overhead.
+
+LLM Streaming Serving Basics
+
+In our vLLM code example, you might have noticed that although the LLM generates tokens one by one internally, the call to outputs = llm.generate([prompt], inference_params) waits until the entire output is generated before returning any result. In the context of a web service—for example, a chatbot—this means the user experiences a long delay before receiving any response—from a few seconds to even minutes, depending on the output length.
+
+For applications with conversational interfaces (like chatbots) or those requiring real-time feedback (such as live captioning or summarization), this delay significantly impacts user engagement. A slow response can frustrate users, reduce retention, and ultimately, lead to a failure to meet business goals.
+
+As you learned in the previous section, tokens are generated sequentially during the decoding phase. To improve responsiveness, you can return each token immediately as it is generated—a technique known as LLM streaming. Streaming, in LLMs, refers to the process of incrementally returning output token by token (or in small chunks) during generation, rather than waiting for the entire output to complete.
+
+Let’s look at how to enable streaming generation with vLLM using a simple code example:
+
+# Initialize the vLLM async streaming engine arguments
+engine_args = AsyncEngineArgs(
+    model="Qwen/Qwen2.5-0.5B",
+    dtype="float16",
+    .. .. ..
+)
+
+# Create the vLLM async streaming engine
+engine = AsyncLLMEngine.from_engine_args(engine_args)
+
+# Define the async function to generate text in streaming mode
+async def generate_text(prompt: str, max_tokens: int = 100):
+    try:
+        # Define sampling parameters
+        sampling_params = SamplingParams(
+            temperature=0.0,
+            max_tokens=max_tokens,
+            stop=["\n"],  # Stop at newline
+        )
+
+        # Generate text
+        request_id = "test-request"  # Unique ID for this request
+        # Generate tokens in streaming mode
+        results_generator = engine.generate(
+            prompt=prompt,
+            sampling_params=sampling_params,
+            request_id=request_id
+        )
+
+        # Process the results
+        final_output = None
+        async for request_output in results_generator:
+            final_output = request_output
+            # Print each token as it's generated
+            for chunk in request_output.outputs:
+                print(chunk.text, end="", flush=True)
+                # We could yield return the token chunk here
+                # if it’s a web service
+        return final_output
+
+The key difference in the streaming version of the vLLM code is that we initialize the model using the AsyncLLMEngine class instead of the standard LLM class. With AsyncLLMEngine, the generate() function returns an asynchronous stream object (AsyncStream) that allows us to pull newly generated tokens one by one using an async for loop—for example, async for request_output in results_generator.
+
+Another valuable benefit of streaming is that it allows users to cancel generation midway if the output is heading in an undesired direction. In vLLM, this can be achieved by calling engine.abort(request_id), where request_id is a unique identifier associated with the specific generation request. This feature not only improves the user experience by avoiding irrelevant or incorrect completions, it also helps conserve compute resources, which is especially important in production environments where efficiency and cost control are critical.
+
+If you’re interested in exploring LLM streaming further, we’ve included a hands-on example in streaming.py. In the next chapter, we’ll demonstrate how to implement LLM streaming in a web service setting, enabling real-time interaction in user-facing applications.
+
+LLM Batch Serving Basics
+
+In the examples we’ve covered so far in this chapter, we’ve sent one prompt to the LLM at a time. While this approach is simple and effective for prototyping, it becomes a bottleneck in high-throughput scenarios—such as summarizing 100,000 documents, indexing 5,000 PDF files, or serving 20,000 concurrent chatbot users. Processing one input at a time simply doesn’t scale.
+
+To address this performance limitation and fully utilize GPU compute resources, you need batching. Batching refers to grouping multiple input requests together and processing them simultaneously in a single forward pass through the model. Instead of handling one prompt at a time, batching allows the model to generate outputs for multiple prompts in parallel, significantly improving throughput. While batching can be applied to most ML models, it is especially crucial for LLMs due to their compute characteristics. Figure 2-14 provides a conceptual illustration of how batching works in LLMs.
+
+Figure 2-14. Batch LLM inference: processing input sequences and generating output sequences in parallel
+
+Transformer-based LLMs can process input batches efficiently because their computations—like matrix multiplications and attention—can be parallelized across sequences. Thanks to shared model weights and the GPU’s parallel compute capability, batching allows handling multiple requests simultaneously with minimal overhead.
+
+We’ll explore advanced batching techniques in depth in Chapters 6 and 7. For now, let’s walk through a simple experiment to see how batch generation works in practice and compare its latency to single-prompt generation:
+
+# Prompts for batch generation, 4 input sequences
+prompts = [
+    "What is the meaning of life?",
+    "Write a short story about a robot learning to love.",
+    "Explain quantum physics in simple terms.",
+    "Translate 'Hello, world!' into Spanish."
+]
+
+sampling_params = SamplingParams(
+    temperature=0.8,
+    top_p=0.95,
+    max_tokens=100
+)
+
+start_time = time.time()
+# process four input sequences together in one batch
+vllm_outputs = llm.generate(prompts, sampling_params)
+end_time = time.time()
+vllm_time = end_time - start_time
+
+print(
+    f"\nvLLM generation time for 4 prompts in a batch: "
+    f"{vllm_time:.4f} seconds"
+)
+
+# process prompt one by one
+start_time = time.time()
+for prompt in prompts:
+   vllm_outputs = llm.generate([prompt], sampling_params)
+end_time = time.time()
+vllm_time = end_time - start_time
+
+print(
+    f"\nvLLM generation time for 4 prompts one by one: "
+    f"{vllm_time:.4f} seconds"
+)
+
+When we ran this code experiment, vLLM took 1.0626 seconds to process a batch of four prompts; it took 2.3865 seconds in total to process all four prompts one by one. This demonstrates a 2.2x improvement in throughput when using batching over single-prompt execution.
+
+With further optimization techniques, you can achieve even higher throughput while simultaneously reducing latency. One such technique is continuous batching (which we’ll discuss in detail in Chapter 6), where new requests are dynamically added as others complete. For example, a 2023 study by Anyscale showed that continuous batching can improve LLM inference throughput by up to 23 times, along with significantly reducing p50 latency.
+
+Summary
+
+In this chapter, we took a deep dive into the core concepts, architectural foundations, and practical techniques for serving LLMs. We started by demystifying the Transformer architecture—focusing on decoder-only models—and examined how attention mechanisms and autoregressive token generation work.
+
+From there, we moved into hands-on walkthroughs that showed how to execute LLM inference. You learned concepts like KV caching and how the prefill and decode phases operate as critical components in optimizing LLM serving performance.
+
+We then transitioned from scratch implementations to using modern serving frameworks like vLLM, demonstrating how they simplify deployment while delivering massive performance. These tools abstract away low-level complexity and enable developers to build scalable, production-ready LLM services with minimal overhead.
+
+Finally, we explored two powerful strategies for real-world LLM application: streaming and batch.
+
+Together, the techniques introduced in this chapter form a foundation on which you can build fast, scalable, and cost-efficient LLM services. You are now equipped with the essential tools and mental models you’ll need to reason about LLM performance, troubleshoot bottlenecks, and design more effective serving pipelines.
+
+In the next chapter, we’ll build on this foundation and show you how to wrap these serving capabilities into a real-world LLM serving web service, exploring design decisions, API structure, and operational best practices.
+
+1 For simplicity, we use the terms input text, input sequence, and prompt interchangeably throughout the book to mean input to an LLM. We also use the term token interchangeably with word. However, in practice, a token is defined by the tokenizer algorithm, which determines how text is broken down into smaller units. Depending on the tokenizer and language, a token may represent a whole word, a subword, or even punctuation. On average, one token corresponds to approximately 0.75 words in English. You can explore the OpenAI tokenizer viewer to understand how a piece of text might be tokenized by a language model and the total count of tokens in that piece of text.
+
+table of contents
+close x
+Hands-On LLM Serving and Optimization
+
+Chi Wang, Peiheng Hu
+
+Published by O'Reilly Media, Inc.
+queue
+5% complete
+Content Progress 0% completed
+Approx. 10 hours left
+Collapse
+Contents
+Highlights
+Foreword
+Preface
+100% complete
+checkmark circle
+1. Introduction To Model Serving And Optimization
+57% complete
+2. Large Language Model Serving
+Inside the Mind of a Transformer
+Show More Items
+Executing LLM Generation: A Step-by-Step Walkthrough
+Show More Items
+LLM Streaming Serving Basics
+LLM Batch Serving Basics
+Summary
+3. Model Serving System Design: A Deep Dive
+4. Model Serving Best Practices
+5. Challenges When Serving LLMs
+6. Essential LLM Optimization Techniques
+7. Advanced LLM Optimization Techniques
+8. LLM Serving Frameworks
+9. LLM Optimization In Practice
+10. Advancements In LLM Serving
+Index
+About The Authors
+search
+settings
+2. Large Language Model Serving
+queue
+Hands-On LLM Serving and Optimization

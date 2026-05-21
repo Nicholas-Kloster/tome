@@ -1,0 +1,751 @@
+3
+Building Your First AI Workflow in n8n
+
+Agentic AI isn't just a concept; it's something you can build, see, and interact with. In this chapter, we transition from theory to action. If you've spent hours copy-pasting Nmap outputs or manually triaging subdomains, you know the grind. This is where we start automating that pain away.
+
+We'll be using n8n, an open source, no-code workflow automation platform that excels at connecting APIs, handling logic, and acting as the orchestration layer for intelligent agents. The reason I chose n8n over dozens of alternatives is simple: it lowers the barrier to automation while still offering serious power under the hood.
+
+We'll walk step by step through the following:
+
+Installing and setting up n8n securely on your own machine or server
+Connecting it with AI services such as OpenAI or HuggingFace
+Building a functional recon agent that collects subdomains, queries ports, and even summarizes findings using LLMs
+Enhancing your bot with retrieval-augmented generation (RAG) capabilities, so your agent can pull in context from external data and make better decisions
+Securing your workflows to avoid common mistakes such as API key leaks or logic bombs
+
+You'll see how each node in n8n acts like a decision point for your agent. These nodes don't just move data; they represent the logic, memory, and adaptability that define agentic AI. If you've ever written a script full of nested if-else blocks that broke the moment something unexpected happened, this is the cure. These nodes decide, adapt, and recover without you babysitting every edge case. More importantly, they allow you to prototype rapidly, iterate with minimal friction, and build complex workflows without needing a backend developer on standby.
+
+By the end of this chapter, you'll have your first security-focused AI workflow running, capable of performing reconnaissance, summarizing data, and adapting to input in ways traditional tools can't. This won't be a passive dashboard. It'll be a living, reasoning automation agent.
+
+Technical requirement
+
+To follow along with the examples in this chapter, you will need the following:
+
+Operating System: Windows 10/11, macOS, or Linux (Ubuntu 20.04+ recommended)
+Node.js: Version 18 or later
+Docker: Version 20.10 or later (for Option 2 installation)
+RAM: 4 GB minimum, 8 GB recommended
+Disk Space: 2 GB for n8n and dependencies
+Network: Internet access for API integrations (OpenAI, Shodan, etc.)
+
+An OpenAI API key (or compatible LLM provider)
+
+Setting up n8n for agentic workflows
+
+This section walks you through three key areas:
+
+Installing and configuring n8n
+Setting up a secure environment for agent operations
+Understanding the n8n interface from an agentic mindset
+Installation options
+
+You can run n8n using one of three common methods:
+
+Option 1 – Local installation (for testing): This is the fastest way to test locally. Once launched, n8n will be available at http://localhost:5678:
+npm install n8n -g
+n8n
+Option 2 – Docker (recommended for production): This option uses Docker to run n8n in an isolated environment, which is more suitable for production use:
+docker run -it --rm \
+  -p 5678:5678 \
+  -v ~/.n8n:/home/node/.n8n \
+  -e N8N_BASIC_AUTH_USER=admin \
+  -e N8N_BASIC_AUTH_PASSWORD=strongpassword \
+  n8nio/n8n
+
+For the purpose of this book, we will be using Option 2, as it provides the fastest and simplest setup for following the examples and building agentic workflows.
+
+Option 3 – Build-ready setup (starter environment): To accelerate your learning, here's a starter GitHub repo that includes:
+A Docker Compose setup
+Preconfigured environment file template
+A basic recon workflow as a starting point
+
+For the most up-to-date instructions, official deployment guides, and node documentation, refer to the official documentation here: https://github.com/n8n-io/n8n. This repository includes full setup guides, example workflows, supported integrations, and community extensions that can help you go beyond what's covered in this book.
+
+Before moving forward, it is important to clarify how the installation options relate to the next subsections. For the remainder of this section, we will proceed with Option 2 (Docker). Running n8n inside an isolated Docker environment allows us to keep the setup OS independent and package all required components into a single, reproducible container. This also makes it easier to include additional dependencies that our agentic workflows will need later, all managed within the same Docker Compose setup.
+
+Building a custom Docker image for security workflows
+
+This custom Dockerfile is built on top of the official n8nio/n8n:nightly base image. The nightly build is the most frequently updated version of n8n, and it ensures that the container always includes the latest features, security patches, and workflow engine improvements. For the purposes of this book, the nightly image provides a stable foundation that supports all agentic automations without requiring additional manual updates. Nothing in this Dockerfile modifies n8n itself; instead, we extend the base image to add the extra tooling required for security-oriented workflows.
+
+Create a file named Dockerfile and define it as shown here to extend the official n8n image with the required dependencies:
+
+FROM n8nio/n8n:nightly
+
+# Switch to root to install system packages
+USER root
+
+RUN apk update && apk add --no-cache \
+    python3 \
+    py3-pip \
+    py3-virtualenv \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    openssl-dev
+
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --upgrade pip && \
+    /opt/venv/bin/pip install \
+      pymongo \
+      requests
+
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN mkdir -p /home/node/.cache && chown -R node:node /home/node/.cache
+
+USER node
+
+This Dockerfile installs several components that n8n does not include by default. As later chapters rely on Python scripting, external API automation, MongoDB interactions, and custom recon logic, the container needs additional system packages and Python libraries to support those capabilities. The image installs Python, pip, virtualenv, common build dependencies (gcc, musl-dev, and openssl-dev), and the pymongo and requests Python packages. These additions allow n8n workflows to execute Python code, communicate with databases, and run more advanced agentic tasks inside the same container. By preparing these dependencies upfront, we create a self-contained environment where all subsequent workflows run consistently without requiring any tools on the host machine.
+
+Running it all with Docker Compose
+
+To make your n8n deployment persistent and production-ready, here's the docker-compose.yml configuration I use:
+
+version: "3.7"
+
+services:
+  n8n:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=n8n.cyprox.io
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - LANG=en_US.UTF-8
+      - LC_ALL=en_US.UTF-8
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://n8n.cyprox.io/
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=${DB_HOST}
+      - DB_POSTGRESDB_PORT=${DB_PORT}
+      - DB_POSTGRESDB_DATABASE=${DB_NAME}
+      - DB_POSTGRESDB_USER=${DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - n8n_cache:/home/node/.cache
+      - /local-files:/files
+      - /local-files:/home/node/
+
+  postgres:
+    image: postgres:13
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT}:${DB_PORT}"
+
+volumes:
+  n8n_data:
+    external: true
+  postgres_data:
+    external: true
+  n8n_cache:
+    external: false
+
+This docker-compose.yml file defines a production-ready n8n environment that supports agentic workflows through a combination of two core containers and persistent volumes. Let's break it down:
+
+n8n (main application container): This is the primary service where your automation workflows run. It uses a custom Docker image (built from the local Dockerfile) that extends the official n8nio/n8n:nightly image with additional tools such as Python, pymongo, and requests. These extensions allow you to:
+Execute custom Python scripts within n8n workflows
+Connect to threat intelligence databases (e.g., MongoDB)
+Perform API calls using native Python capabilities
+
+Key environment variables here include:
+
+N8N_HOST, N8N_PROTOCOL, and N8N_PORT: Define how the n8n UI and webhook endpoints are exposed (e.g., https://n8n.cyprox.io)
+WEBHOOK_URL: Needed to properly handle external callbacks or integrations
+
+Database credentials for the connected PostgreSQL instance.
+
+postgres (database container): This container runs a PostgreSQL 13 database that n8n uses to store:
+Workflow definitions
+Execution logs
+Credentials (encrypted)
+User settings
+
+Running PostgreSQL in a separate service ensures data durability, even if the n8n container is rebuilt or updated.
+
+The following volumes are used to persist important data between container restarts or image updates:
+
+n8n_data: Stores all n8n internal state, such as workflows, credentials, and logs. This volume is marked as external, assuming it's already created (e.g., using docker volume create n8n_data).
+n8n_cache: Used for caching purposes, such as storing temporary files or LLM responses. It's local to this stack.
+/localfiles:/files and /localfiles:/home/node/: Bind mounts for importing or exporting local files. Useful for debugging, logs, model files, or sharing data between the host and container.
+postgres_data: Persists PostgreSQL data across container rebuilds. Also marked as external for security and stability.
+Accessing n8n in your browser
+
+Once the containers are up and running, you can access the n8n interface by navigating to the URL defined in your environment variables:
+
+https://n8n.cyprox.io
+
+This URL corresponds to the N8N_HOST, N8N_PORT, and N8N_PROTOCOL settings you provided in the docker-compose.yml file. Make sure your DNS is configured correctly and the domain points to the server's public IP address. If you're deploying locally or using a reverse proxy, ensure that SSL is set up properly to avoid connection issues.
+
+If everything is configured correctly, opening that URL in your browser will take you to the n8n dashboard, which is your central workspace for building and managing agentic AI workflows. From here, you can start creating nodes, importing templates, and wiring up AI-powered security automations.
+
+After the containers start and the service becomes available, navigating to the configured URL should display the n8n dashboard as shown :
+
+Figure 3.1 – n8n dashboard
+
+Before moving on, let's recap where we are. At this point, the n8n environment is fully operational: the Dockerized stack is running, our custom image has been built, and the n8n dashboard is reachable through the browser. With the platform prepared, we can now begin integrating the external services that will power our agentic workflows.
+
+The next step is to connect n8n with OpenAI and threat intelligence APIs, enabling our agents to reason, enrich data, and make informed decisions within automated workflows.
+
+Connecting OpenAI and threat intelligence APIs
+
+Now that your n8n instance is up and running, it's time to give it a brain. In this section, we'll hook it up to OpenAI's GPT models and threat intelligence platforms such as Shodan, VirusTotal, and Censys.
+
+These connections transform static automation into dynamic decision-making. You're no longer just passing data between tools; you're enabling your agents to think, reason, and enrich context in real time.
+
+We'll cover:
+
+How to securely store API credentials for intelligence providers in n8n
+How to call threat intelligence APIs using native or HTTP Request nodes
+How to structure prompt inputs when combining LLM output with threat intelligence data
+Hands-on enrichment workflows using APIs such as AbuseIPDB, VirusTotal, GreyNoise, OTX, and urlscan.io
+
+Before we begin integrating threat intelligence APIs, we first need to configure the LLM provider that our AI Agent node will use for reasoning. The following screenshot shows the chat model options supported in n8n:
+
+Figure 3.2 – Available language models for the AI Agent node in n8n
+
+n8n currently supports a wide range of LLM providers, and the preceding screenshot shows the full set of chat models available at the time of writing. While we will primarily use OpenAI's GPT models for all workflow examples in this book, it is important to understand that you can select any of the supported providers as the Chat Model input for your AI Agent node. The following list briefly summarizes the major providers and what they offer.
+
+Here, you can see the other LLMs currently available in n8n:
+
+Anthropic Chat Model (Claude):
+Models: Claude 3 Opus, Sonnet, and Haiku
+Strengths: Long-context reasoning (100K+ tokens), safer alignment, and multi-turn understanding
+Use cases: Compliance-safe responses and deep log summarization
+Azure OpenAI Chat Model:
+Models: GPT-3.5, GPT-4 via Azure
+Strengths: Hosted on Azure, useful for enterprises with regional or regulatory hosting requirements
+Use case: Using OpenAI capabilities in a Microsoft-regulated cloud environment
+AWS Bedrock Chat Model:
+Models: Claude, Mistral, and Amazon Titan (through Bedrock)
+Strengths: Integration with AWS ecosystem; ideal for teams already using Bedrock for GenAI
+Use case: Agents triggered by AWS events or analyzing cloud threat data
+DeepSeek Chat Model:
+Models: DeepSeek-VL (vision language) and DeepSeek-LLM
+Strengths: Emerging open models with strong multitask performance
+Use cases: Experimental agent pipelines and hybrid vision-language analysis
+Google Gemini Chat Model:
+Models: Gemini 1.5 Pro (previously Bard)
+Strengths: Fast, low-latency; great with structured data and summarization
+Use cases: Security FAQ bots, vulnerability summarizers, and alert summarization
+Google Vertex Chat Model:
+Models: Gemini Pro via Vertex AI
+Strengths: Runs within Google Cloud; supports prompt tuning and managed endpoints
+Use cases: Enterprise use cases where Vertex AI is already deployed
+Groq Chat Model:
+Models: LLaMA-2 hosted on Groq's ultra-fast inference chips
+Strengths: Blazing speed, good for low-latency automation
+Use case: Real-time agent decisioning (e.g., alert classification or triage)
+Mistral Cloud Chat Model:
+Models: Mistral-7B and Mixtral (Mixture-of-Experts)
+Strengths: Open source; competitive with GPT-3.5 on many tasks
+Use cases: Lightweight reasoning, air-gapped deployment, and PoC reasoning
+Ollama Chat Model:
+Models: LLaMA2, Mistral, Phi-2, and more (run locally)
+Strengths: Ideal for offline or self-hosted setups (on laptop or server)
+Use cases: Privacy-focused automation and disconnected red team tooling
+OpenRouter Chat Model:
+Models: Unified gateway to multiple LLMs (GPT-4, Claude, Mixtral, etc.)
+Strengths: Lets you route prompts to different providers through one API key
+Use cases: AB testing agents, fallback logic, and model comparison
+xAI Grok Chat Model:
+Models: Grok (by xAI/Elon Musk's team)
+Strengths: Still maturing, but interesting for experimental agent setups
+Use case: Not recommended yet for production, but can be tried in hobby projects
+OpenAI Chat Model:
+Models: GPT-4, GPT-3.5, and GPT-4-turbo
+Strengths: State-of-the-art performance and massive ecosystem support
+Use cases: Almost anything to do with summarization, reasoning, triage, classification, and PoC explanation
+
+Before we can use any LLM inside n8n, we first need to configure our OpenAI credentials. The following screenshot shows where to add and test your OpenAI API key inside n8n:
+
+Figure 3.3 – The OpenAI credential screen in n8n
+
+I'll be using OpenAI's GPT models as the primary language model powering the AI Agent workflows. OpenAI's API is stable, well-documented, and widely adopted across the industry, which makes it a practical starting point for offensive security automation. That said, n8n supports many other LLM providers such as Claude, Gemini, Mistral, and Groq, which you're free to explore or substitute based on your use case, privacy requirements, or regional constraints. You can even build hybrid setups where different agents use different models, depending on the complexity or the nature of the task.
+
+To connect OpenAI, you simply create a credential entry using your API key (as shown in the preceding screenshot). Optionally, if you're part of an organization on OpenAI, you can include your Org ID, but this is not required for personal or single-tenant accounts. The base URL is https://api.openai.com/v1, which n8n uses to route all model interactions behind the scenes.
+
+Once an OpenAI API key is configured and validated, as shown in the preceding example, the AI Agent node becomes capable of querying GPT models within any workflow, whether for summarizing port-scan results, generating payload logic, or responding to context-aware vulnerability prompts.
+
+Threat intelligence APIs
+
+In addition to using LLMs for reasoning and summarization, one of the most powerful capabilities of agentic workflows is their ability to pull live intelligence from external sources. As security professionals, we rely on threat feeds every day, whether to validate an IP address, enrich a suspicious domain, or detect malware distribution infrastructure. In this section, we'll connect n8n to several widely used public threat intelligence APIs, including AbuseIPDB, VirusTotal, GreyNoise, OTX (AlienVault), and urlscan.io.
+
+Each of these services offers a different lens into the threat landscape. AbuseIPDB and VirusTotal are like running a background check on anything suspicious. Paste an IP, hash, or domain, and they'll tell you whether it has a criminal record. GreyNoise and urlscan.io lean toward behavior-based intelligence, focusing on how an IP behaves on the internet or how a URL executes within a sandboxed browser. OTX (AlienVault) is strongly community-driven, aggregating indicators of compromise contributed by thousands of researchers worldwide. The good news is that all of these platforms offer free-tier access with generous rate limits, making them ideal for prototyping enrichment workflows. Signing up typically takes just a few minutes, and once you have an API key, you can start making requests from within n8n using either the HTTP Request node or by configuring credentials through custom variables.
+
+Here's what you'll need to get started:
+
+AbuseIPDB: Create a free account at https://www.abuseipdb.com/ and generate an API key from your dashboard
+VirusTotal: Sign up at https://www.virustotal.com/gui/home/upload, go to your profile | API key, and copy your personal key (free users get ~500 requests/day)
+GreyNoise: Visit https://www.greynoise.io/, create a free Community account, and use your API key with the Community API endpoint
+OTX (AlienVault): Register at https://otx.alienvault.com/, then go to your settings page to find your API key
+urlscan.io: Go to https://urlscan.io/, create an account, and retrieve your API key from your user profile
+
+Once you have your API keys, n8n makes integration easy. You can inject these keys into requests using the HTTP Header or Query Parameter fields, store them as environment variables for reusability, or manage them securely through Credentials Manager.
+
+In the next sections, we'll introduce several commonly used threat intelligence APIs and show how each of them can be queried from within n8n as part of an enrichment workflow.
+
+Step 1 – Using AbuseIPDB for IP reputation analysis
+
+To begin our enrichment workflow, we'll start with AbuseIPDB and build a simple two-node setup that retrieves reputation data for any IP address.
+
+AbuselPDB is a community-powered database of abusive IP addresses. It is one of the simplest yet most effective services for checking whether an IP address has been reported for abusive behavior. It provides reputation scores based on reports of spam, distributed denial of service (DDoS) attacks, brute-force attempts, and more.
+
+We'll build a two-node workflow in n8n:
+
+A custom HTML form node: n8n makes it surprisingly easy to collect user input via embedded HTML forms. In this case, we'll prompt the user to enter an IP address or a domain. This input will later be passed as a variable into the API request.
+An HTTP Request node: This node will send a GET request to the AbuseIPDB API. We'll pass the user-submitted IP address as a query parameter. The trick here is using n8n's expression editor, which allows us to dynamically reference form input as part of the request. This is where n8n's expression syntax really shines. It lets us insert data from previous nodes inline, without writing a single line of JavaScript.
+
+By chaining these two nodes, we'll create a lightweight enrichment microservice. A user enters an IP, the agent sends it to AbuseIPDB, and the result (whether that IP has been reported for abuse) can then be logged, visualized, or even passed to a decision node.
+
+Here's what the workflow looks like with the HTML form node connected to an HTTP Request node that sends the IP address to AbuseIPDB:
+
+Figure 3.4 – AbuseIPDB workflow
+
+In the following screenshot, you can see our completed HTTP Request node that sends a query to AbuseIPDB using the user-submitted IP address:
+
+Figure 3.5 – AbuseIPDB HTTP Request node
+
+Pay close attention to the expression used under the Value field:
+
+{{ $json["Check IP or Domain"] }}
+
+This dynamic syntax is how n8n injects data from previous nodes into your request. In this case, it's pulling the IP or domain that the user entered into the HTML form and passing it to the API as a query parameter named ipAddress.
+
+We've also included our API key securely in the headers section, along with the appropriate Accept type.
+
+Figure 3.6 – AbuseIPDB API keys
+
+For this test, we submitted the IP address 8.8.8.8, and as shown on the right-hand side, the API responded with a rich JSON payload including fields such as abuseConfidenceScore, usageType, isp, countryCode, and even a timestamp for the last time this IP was reported.
+
+Don't worry if some of this data feels overwhelming; we'll soon build AI-driven agents that will analyze and explain these results for you. You'll go from raw JSON to fully interpreted insights using LLMs in upcoming chapters. This is just the beginning.
+
+Step 2 – Querying VirusTotal for additional context
+
+Next, we'll bring VirusTotal into the picture. It is arguably one of the most well-known platforms for multi-engine malware analysis and URL/file scanning. In this part of the workflow, we'll send an IP address, domain, or URL to VirusTotal and retrieve contextual data such as detection counts, known associations, and linked infrastructure. Just like with AbuseIPDB, we'll use the HTTP Request node in n8n to connect to the VirusTotal API.
+
+The process is nearly identical: we'll pass the observable (e.g., an IP) as a path parameter in the API call and include the API key via a custom header. Whether you're checking for malware distribution, phishing URLs, or identifying infrastructure linked to malicious activity, VirusTotal provides a solid layer of enrichment.
+
+The following screenshot shows the VirusTotal dashboard, where you can retrieve your API key and review your usage limits:
+
+Figure 3.7 – Virustotal API key
+
+The following figure shows the overall n8n workflow we will use to interact with the VirusTotal API. It follows the same pattern established earlier: a form node that collects user input, followed by an HTTP Request node that submits that input to VirusTotal for enrichment:
+
+Figure 3.8 – VirusTotal workflow
+
+In this workflow, the form node serves as the entry point for user-submitted observables. As you can see in the screenshot, the node presents a simple interface that accepts a single text field from the user:
+
+Figure 3.9 – Threat Intelligence form
+
+When we expand the form node, we can see that it contains a single form element: a text input labeled Check IP, Domain or URL. This is where the user enters the observable they want to analyze. Once saved, n8n exposes this form at a unique URL, which you can see (see Figure 3.9) in the node's configuration panel. Any value submitted through that URL will flow into the next node in the workflow:
+
+Figure 3.10 – Threat Intelligence form configuration
+
+After submitting the IP address through the form, n8n forwards it to the HTTP Request node, which then queries the VirusTotal API. The corresponding screenshot shows the raw JSON output returned by VirusTotal. This output includes fields such as detection counts, reputation attributes, linked infrastructure, and other contextual indicators associated with the provided IP address.
+
+Figure 3.11 – VirusTotal API usage
+
+Notice how the URL field uses an expression to dynamically insert the value from the form input:
+
+https://www.virustotal.com/api/v3/ip_addresses/{{ $json["Check IP or Domain"] }}
+{{ $json["Check IP or Domain"] }}
+
+This expression pulls the user-submitted value from the previous node and appends it to the VirusTotal endpoint, allowing the request URL to be constructed dynamically. As shown in the VirusTotal1 node, n8n evaluates this expression at runtime, enabling the workflow to remain flexible and reusable for any input without requiring manual edits to the node configuration.
+
+In the VirusTotal1 node, the Send Headers option is enabled on the HTTP Request node. This allows us to attach custom headers to the outgoing API call. Since VirusTotal requires authentication through the x-apikey header, we provide our API key there to ensure the request is accepted, even when using the free tier. On the right side, you can see the JSON response for the IP 8.8.8.8, including attributes such as:
+
+reputation: the score assigned by VirusTotal based on aggregated signals
+Country, region, and registry details
+Registration Data Access Protocol (RDAP) data about the IP's allocation and ownership
+
+This kind of enrichment gives your workflows a deeper layer of context. While this raw JSON might look technical now, don't worry, we'll use an LLM shortly to interpret these responses and generate human-readable summaries, recommendations, or even automated triage decisions. Think of this as feeding your agents intelligence they can reason about.
+
+Step 3 – Filtering internet noise with GreyNoise
+
+Now, let's bring in GreyNoise, a unique threat intelligence provider that helps distinguish signal from noise on the internet. While platforms such as VirusTotal focus on whether an IP is malicious, GreyNoise takes a different approach: it tells you whether an IP is known to be part of internet-wide scanning or background noise – a crucial distinction when you're triaging alerts or analyzing external threats.
+
+GreyNoise is especially useful in offensive workflows where you're profiling external infrastructure. For example, if you're mapping an attack surface and discover an exposed IP, knowing whether that IP is constantly scanned by the internet or actively used in malicious traffic can help prioritize actions.
+
+The following screenshot shows the GreyNoise dashboard, where you can retrieve your API key and review the available access tiers before integrating the Community API into your n8n workflow:
+
+Figure 3.12 – GreyNoise dashboard
+
+In this part of the workflow, we'll again use n8n's HTTP Request node. We'll pass the user-submitted IP into GreyNoise's Community API and receive a rich JSON response indicating the following:
+
+Whether the IP is noise (observed mass scanning)
+The classification of the IP (benign, malicious, or unknown)
+Metadata such as operating system, user agent, or known tools used by the source
+
+And yes, you guessed it, we'll later use an LLM to interpret this metadata. But first, let's get connected to the GreyNoise API and enrich our input like a seasoned analyst would.
+
+As shown in the following screenshot, we've configured an HTTP Request node to interact with the GreyNoise Community API. The goal here is to understand whether the IP address, submitted through the same HTML form, is classified as malicious, benign, or simply part of the internet's background noise:
+
+Figure 3.13 – GreyNoise Community API
+
+We're again using n8n's powerful expression system in the URL field to pass the IP dynamically:
+
+https://api.greynoise.io/v3/community/{{ $json["Check IP or Domain"] }}
+
+This ensures that the same workflow can handle any IP the user submits without manual editing. We've also enabled the Send Headers toggle to authenticate the request by injecting our API key as a JSON header.
+
+The output on the right shows the result for the IP address 8.8.8.8:
+
+Figure 3.14 – Query to GreyNoise
+
+GreyNoise classifies it as follows:
+
+"noise": false: This IP is not part of global scan noise
+"riot": true: This IP belongs to a known, trusted service
+"classification": "benign": This means there's no threat activity associated with it
+
+Additionally, the response includes a link to a public GreyNoise visualization page and a timestamp for when it was last seen. This minimal but meaningful context can be incredibly valuable in agent-driven workflows, where the decision to escalate or deprioritize an indicator often hinges on this kind of metadata.
+
+Later, we'll use LLMs to parse and summarize this kind of enrichment data automatically, giving you a clearer picture without reading raw JSON.
+
+Step 4 – Enriching indicators with OTX (AlienVault Open Threat Exchange)
+
+Now, let's connect to AlienVault Open Threat Exchange (OTX), a community-driven platform that shares indicators of compromise (IOCs), tactics, techniques, and procedures (TTPs), and curated threat intelligence in the form of pulses. What makes OTX unique is its collaborative nature: security researchers and practitioners contribute threat data, which can then be consumed programmatically through the OTX API.
+
+For our use case, we'll be querying the IP reputation endpoint, which returns the following information:
+
+Whether the IP address has been seen in any recent pulses (threat campaigns)
+The count and titles of those pulses
+Geo-location, ASN, and passive DNS metadata
+Associated malware families or tags
+
+Taken together, these signals provide more than just a point-in-time reputation check. By enriching observables such as IPs and domains with OTX, your workflows gain access to real-world threat intelligence, not just point-in-time lookups, but data tied to actual attack patterns observed in the wild. This makes it a strong layer for context-aware automation and CVE triage.
+
+The following screenshot provides an overview of OTX pulses and associated threat intelligence:
+
+Figure 3.15 – OTX pulses
+
+We'll use n8n's HTTP Request node once again, pass the IP address as a path parameter, and authenticate using your personal OTX API key. It's straightforward to implement, but powerful in terms of the narrative it adds to your agent's decision-making process:
+
+Figure 3.16 – Usage of the OTX API key
+
+Using a parameterized HTTP Request node with API key-based authentication makes the request flexible and reusable across any IP input. Authentication is handled via the X-OTX-API-KEY header, where we pass our personal API key, just like with the other threat services we've used so far.
+
+Looking at the output on the right (see Figure 3.17), the IP address 8.8.8.8 is shown with minimal threat context:
+
+The pulse_info count is 0, which means this IP hasn't been mentioned in any recent community-submitted threat campaigns
+The reputation score is 0, suggesting no malicious behavior has been associated with it
+Additional fields such as malware_families, industries, and adversary are empty, reinforcing the idea that this is a clean IP
+
+Figure 3.17 – Results for the IP address query
+
+However, this structure becomes very useful when an IP is malicious. OTX can return rich intelligence, including campaign names, associated malware, adversary groups, and even links to threat reports. Later, when we build our LLM-enabled enrichment logic, these fields will be automatically parsed and summarized to help prioritize findings.
+
+For now, you've successfully completed the integration of another piece of real-world threat intelligence plugged into your agentic pipeline. As shown in the following screenshot, we now have a complete enrichment pipeline wired up in n8n:
+
+Figure 3.18 – Threat Intelligence workflow
+
+When a user submits an IP or domain, it's simultaneously sent to multiple threat intelligence sources: AbuseIPDB, VirusTotal, GreyNoise, and OTX. This parallel execution not only speeds up response time but also ensures that our agents have access to diverse and contextual data, laying the groundwork for intelligent analysis in later stages of our workflow.
+
+Step 5 – Deep URL and behavior analysis with urlscan.io
+
+The final enrichment source we'll integrate into our workflow is urlscan.io, a powerful and free service that acts as both a sandbox and a search engine for URLs. Unlike reputation-focused platforms, urlscan actually loads the submitted URL in a headless browser and records everything: HTML content, network connections, redirection chains, JavaScript behavior, and more. This makes it incredibly useful for detecting phishing pages, malicious redirects, shady third-party scripts, and even silent command-and-control beacons.
+
+The following screenshot shows the urlscan.io dashboard and scan context that our workflow interacts with when performing deep URL and behavior analysis:
+
+Figure 3.19 – urlscan.io dashboard
+
+Whether you're testing exposed login panels, suspicious phishing domains, or links found during OSINT, urlscan adds dynamic depth to your investigation. It provides the following:
+
+A screenshot of the rendered page
+All connected domains and external resources
+HTTP headers, TLS certificate info, and redirection logic
+And classification tags (e.g., phishing, crypto, login, etc.) when applicable
+
+For our workflow, we'll send a submitted domain or URL to the submit endpoint via an HTTP POST request, using the free public API. After the request is queued, we'll receive a result URL where the scan output can be viewed or retrieved by the agent later for analysis.
+
+Let's go ahead and wire up this final node to give our enrichment agent full visibility, from static metadata to real-time web behavior.
+
+In the following screenshot, we've configured an HTTP Request node to interact with urlscan.io's submission API. Unlike the other threat intelligence platforms we've integrated so far, which are primarily IP-focused, urlscan is used to analyze full domains and URLs. In our case, the submitted value was https://cyprox.io/, and the request returned a UUID, result link, and scan visibility metadata:
+
+Figure 3.20 – HTTP node query results
+
+One important detail here: the value being scanned is a URL, not an IP address.
+
+That brings us to a critical branching point in our workflow. Since different threat APIs expect different input formats (IP vs. domain vs. full URL), we need a way to conditionally route the data before enrichment. This is where n8n's Switch node comes in.
+
+If you're coming from traditional scripting, this might remind you of an if-else or switch-case block. But with n8n, it's visual, intuitive, and easy to implement. Don't worry if you're new to this concept. I'll show you exactly how to add a Switch node, define the conditions (e.g., if input contains http → treat as URL), and route your workflow accordingly. With just a few clicks, your automation becomes smart enough to handle diverse input types with confidence. In the following screenshot, you can see the final version of our threat enrichment workflow:
+
+Figure 3.21 – Threat enrichment workflow
+
+We've added a Switch node between the form submission and the API requests, allowing the input to be intelligently routed based on whether it's an IP address, domain, or URL.
+
+Now, when you click the Test workflow button, a web form will launch where you can enter any value, for example, 8.8.8.8, example.com, or https://packt.com/. The Switch node takes care of determining the type and only sends the request to the relevant APIs.
+
+This dynamic branching ensures that each service gets data in the format it expects, without manual intervention. It's clean, efficient, and scalable, exactly the kind of intelligence we want to build into our automation pipelines. Let's now walk through how we configured this Switch node.
+
+The following screenshot shows how we've configured the Switch node in n8n to route traffic based on whether the submitted value is an IP address, a domain name, or a full URL:
+
+Figure 3.22 – Switch node configuration
+
+Each condition uses a regex match against the Check IP, Domain or URL input field:
+
+IP address match: This expression catches IPv4 addresses such as 8.8.8.8:
+
+^(\d{1,3}\.){3}\d{1,3}$
+
+Domain match: This captures domains such as example.com or cyprox.io:
+
+^([a zA Z0 9 ]+\.)+[a zA Z]{2,}$
+
+URL match: This detects values such as https://cyprox.io/:
+
+^https?:\/\/
+
+Each branch (output) now receives the right kind of input, ensuring that only relevant APIs get triggered per use case. You can see from the Output pane that https://cyprox.io/ was correctly detected as a URL and routed to Output 2.
+
+Now that inputs are correctly classified and routed to the appropriate enrichment paths, we have the foundation needed to build more autonomous workflows. In the next section, we'll put these pieces together to design our first no-code reconnaissance agent.
+
+Designing your first recon bot with no-code agents
+
+Now that you've got your AI agents connected and the basics of API integration under your belt, it's time to start putting those tools to work. In this section, we'll build our first functional recon bot: a no-code, intelligent agent that collects valuable information about a target's attack surface.
+
+This bot will run the following classic reconnaissance activities, all without writing a single line of Python or Bash:
+
+Subdomain enumeration
+Port scanning
+Basic metadata and fingerprinting
+Threat intelligence correlation
+
+Why start with recon? Because reconnaissance is the map-making phase of offensive security. Without it, you're wandering in the dark. Everything else, such as exploitation, privilege escalation, and lateral movement, depends on knowing what's exposed. And by automating it, we get consistency, speed, and context that we can reuse later.
+
+What you'll build
+
+Our first recon bot will:
+
+Accept a domain or IP address as input (as you did in the Threat intelligence example)
+Use multiple tools via HTTP nodes to collect public data (e.g., Subfinder, Shodan, and SecurityTrails)
+Aggregate and normalize the output
+Log results or store in a file for downstream analysis
+
+Optionally, we can plug in a language model, such as OpenAI's GPT or Anthropic's Claude, to summarize findings in plain English: a perfect way to prep data for non-technical stakeholders or automated reporting later.
+
+How the flow will work
+
+The n8n workflow will follow this structure:
+
+[Input Form Node]
+      |
+[Switch Node (Domain/IP)]
+      |
+[Subdomain Enumeration Node]
+      |
+[Shodan Node]
+      |      |
+[Text Summary / Output Node]
+
+Once you've completed the entire recon bot workflow, it will look like a fully structured automation pipeline, intelligently branching based on input type and integrating with multiple data sources. You'll see nodes connected for subdomain enumeration, IP enrichment, port scanning, and even summarization. This visual flow will represent a complete, no-code offensive recon tool, one that dynamically adapts to domains, IPs, and URLs, just as a real penetration tester would. Here is what the finished workflow will look like in n8n:
+
+Figure 3.23 – n8n recon bot workflow
+
+This completed workflow can be downloaded for free from the book's GitHub repository. (To access the repository link, follow the steps in the Download the example code files section in the Preface.)
+
+Feel free to import it directly into your n8n instance, explore each node, and customize it to suit your own recon needs.
+
+This Domains section of the workflow demonstrates how the recon bot expands a list of discovered subdomains into actionable intelligence. Starting with the output of the SecurityTrails node, which provides a list of subdomains for a given root domain, the data flows through a function node (FQDN) that transforms each subdomain into its fully qualified domain name.
+
+The following diagram illustrates how the Domains branch of our recon workflow processes and enriches discovered subdomains from end to end:
+
+Figure 3.24 – Domains processing flow
+
+We then enter a Loop Over Items node that processes each FQDN one at a time. Within the loop, we perform DNS resolution to fetch IP addresses (DNS Resolution), extract those IPs using another function node (Extract IPs), and then pass the results into Shodan to identify open ports, banners, and other exposure data.
+
+The Edit Fields node is used to clean and format the output, ensuring that it's standardized and easy to interpret. Finally, a Merge node consolidates loop results with the original data, and an HTML node generates a report-ready summary in human-readable format.
+
+This part of the pipeline demonstrates how even multi-step enrichment processes can be chained together seamlessly in n8n without writing a single line of traditional code.
+
+This final screenshot showcases the polished output of our no-code recon bot, an HTML report generated automatically using the HTML node in n8n:
+
+Figure 3.25 – HTML report overview
+
+On the left, you can see the raw JSON input flowing from the merged workflow results, which includes subdomain names, associated IP addresses, organizational data (e.g., Cloudflare), and WAF detection status:
+
+Figure 3.26 – Subdomain list input
+
+On the right, this data is rendered into a clean, paginated HTML table labeled Recon Bot, making it easy to scan and share:
+
+Figure 3.27 – Recon Bot output
+
+Each row summarizes one subdomain and its recon details, presenting multiple IPs where available. This kind of structured output transforms raw data into actionable insights ready to be exported, emailed, or stored for audit purposes, all without writing a single line of traditional reporting code.
+
+In a real-world engagement, each of the tools integrated into this workflow, such as SecurityTrails, Shodan, AbuseIPDB, VirusTotal, GreyNoise, and AlienVault OTX, can return a wealth of additional data points beyond what we included here. You could enrich each subdomain or IP with vulnerability metadata, passive DNS history, internet service provider (ISP) geolocation, behavioral indicators, and even CVE correlations. However, to keep this chapter concise and maintain a focus on core concepts, I chose to finalize the workflow with the current HTML node. This approach strikes a balance between functionality and clarity, while giving you a solid foundation to build more advanced automations on your own.
+
+At this point, we've completed the full enrichment and reporting loop for our recon bot from raw discovery to structured, human-readable output. This gives us a solid baseline before moving on to more advanced reasoning and retrieval-based workflows.
+
+Implementing a RAG system on n8n
+
+Implementing a RAG system in n8n opens up powerful capabilities for AI agents, especially in offensive security, where static prompts are often not enough. At its core, RAG allows a language model to retrieve relevant information from external data sources before generating a response, enhancing accuracy, context, and timeliness. Instead of relying solely on what the model was trained on, RAG pipelines pull in fresh intelligence, such as vulnerability descriptions, tool outputs, documentation, or internal knowledge bases, at runtime.
+
+There are generally two common approaches to RAG:
+
+Simple RAG: A workflow retrieves context (e.g., CVE details or scan findings) via API or search, then injects that data directly into the prompt sent to the LLM. This is great for fast, lightweight augmentation, perfect for summarizing findings or generating reports with dynamic input.
+Vector RAG: A more advanced method where documents or data chunks are stored in a vector database (such as Chroma DB, Weaviate, or Pinecone). When the agent needs context, it transforms the question into a vector, finds the most semantically similar documents, and feeds those into the prompt. This is useful for larger corpora or when you want deep semantic understanding, such as querying pentest reports or internal standard operating procedures (SOPs).
+
+In this section, we'll start with a simple RAG implementation, integrating n8n with external sources such as CVE feeds and documentation APIs. You'll see how to pull in data based on recon results and use an LLM, such as OpenAI, to generate smart, actionable summaries that can assist both technical and non-technical stakeholders.
+
+In the finalized workflow shown in the following screenshot, we've implemented a full RAG system using Pinecone as the vector store. This setup allows us to enrich our AI agent with custom recon intelligence and dynamic memory. On the right-hand side of the canvas, you can see how documents, such as HTML recon summaries or threat intelligence reports, are split using a character text splitter, embedded with OpenAI Embeddings, and stored in Pinecone Vector Store:
+
+Figure 3.28 – Implementing a RAG system
+
+Once stored, the AI agent can perform semantic search via vector queries and retrieve contextually relevant chunks before generating responses through the OpenAI chat model. This enables the agent to answer follow-up questions such as "What subdomains were discovered with Shodan open ports?" or "Which IPs were flagged by AbuseIPDB?" with full context awareness. It's a powerful demonstration of how agentic workflows and RAG can work hand-in-hand to drive smarter, real-time offensive security automation.
+
+In the following screenshot, we can see the final step of pushing structured recon data into a vector database using Pinecone. The workflow feeds directly from the Merge node, which collects results from the full reconnaissance loop. Since the data is already formatted as clean JSON, thanks to the earlier Edit Fields node inside the loop, we were able to pass this data straight into Pinecone without needing additional formatting or post-processing:
+
+Figure 3.29 – Implementing Pinecone vector
+
+To embed the data, we used OpenAI's large embedding model, which excels at capturing semantic relationships even in short JSON blobs containing IPs, subdomains, and WAF tags. Before embeddings, we used the Character Text Splitter node. This is crucial because many vector stores, including Pinecone, perform better with smaller, semantically meaningful chunks rather than full raw documents. We avoided splitting by lines or paragraphs because our input was structured JSON, not natural text. Character-based splitting gave us finer control over chunk sizes without breaking the format.
+
+Default Data Loader was selected because it provided the simplest path for pushing structured JSON into the Pinecone pipeline. It allowed us to define the document field and metadata schema flexibly. We avoided other loader types, such as Web Page Loader or File Loader, because those are optimized for scraping or uploading unstructured content, such as raw HTML or PDFs, less useful in our structured data scenario. Once set up, inserting context-rich, structured recon data becomes seamless and powerful for downstream RAG querying.
+
+In this final portion of our RAG-powered setup, we're enabling an interactive chat agent that can reason over the previously stored reconnaissance data. As shown in the following screenshot, this flow is triggered by the When chat message received node, which activates whenever a user submits a prompt, such as "What ports are open on subdomains hosted by Cloudflare?"
+
+Figure 3.30 – RAG-implemented AI agent
+
+Let's break down the components and why we built them this way:
+
+AI Agent (Tools Agent): This is the heart of the interaction. It orchestrates the conversation logic, maintains context, and decides whether it needs to call external tools, such as querying the vector store. Instead of hardcoding the response logic, we use a goal-based approach, letting the agent figure out which resources it needs to use.
+OpenAI Chat Model: We connected OpenAI's GPT model as the language engine behind the chat. It interprets prompts, constructs embeddings, and generates fluent, human-like responses.
+Simple Memory: This memory module tracks conversational state. Without it, the AI wouldn't remember previous messages or be able to refer back to earlier context in multi-turn conversations. It acts as a lightweight, short-term memory ideal for chat agents.
+Pinecone Vector Store1 (Tool): The agent has access to our Pinecone instance as a tool that it can invoke when it needs background knowledge. In our case, this knowledge is populated from the recon bot's output (stored in embeddings).
+Embeddings (OpenAI): When a user asks a question, the agent embeds the prompt and performs a similarity search on Pinecone using this vector. This allows it to retrieve the most relevant recon data points, essentially grounding the answer in real, previously collected results.
+
+This architecture makes it easy to swap in other models (such as Claude or Groq), scale out to multiple tools, or even add access control and logging layers. In short, this is a production-ready RAG workflow but built in n8n, with no-code ease.
+
+The following screenshot shows the final result of our RAG-enabled AI agent in action. When asked a question such as "What are the other subdomains?", the agent retrieves relevant data from Pinecone and responds conversationally accurately, listing subdomains stored during the recon phase. It's a great example of how recon output, when indexed properly, becomes instantly searchable and explainable through natural language:
+
+Figure 3.31 – Chat interaction with AI Agent, part 1
+
+Now that our data is stored in a vector database and seamlessly accessible through an AI agent, we can begin asking far more complex and insightful questions. We're not just visualizing recon results, we're talking to them.
+
+The following screenshot illustrates how the AI agent can directly query the vectorized recon data and receive contextual, human-readable answers based on previously enriched intelligence:
+
+Figure 3.32 – Chat interaction with AI Agent, part 2
+
+This opens the door to true AI reasoning: the ability to have a conversation with your data, extract relationships, validate assumptions, and let the LLM guide the next steps in your security workflow. Whether it's identifying unusual exposure patterns or mapping infrastructure links, the AI becomes a collaborator, not just a processor. This is where automation meets intelligence.
+
+While the current Chat interface in n8n provides a functional starting point, it's clear that it lacks some of the usability and responsiveness we'd expect for real-world analyst workflows. Fortunately, n8n offers solutions for this. By leveraging external UI components, such as embedding the chat into a custom web app via n8n's webhook and API nodes, you can design a much more interactive and polished experience. This approach allows you to build tailored frontends where AI reasoning can be integrated into dashboards, analyst consoles, or ticketing systems, making your intelligent agents not just accessible but operationally useful.
+
+As shown in the following screenshot, n8n allows you to make your AI-powered chat publicly accessible by toggling the Make Chat Publicly Available option under the When chat message received node:
+
+Figure 3.33 – Exposing the AI chatbot, publicly accessible
+
+Once enabled, a live chat URL is generated, perfect for sharing or embedding externally to interact with your AI agent in real time:
+
+Figure 3.34 – Public interface of the AI chatbot
+
+Now that our AI agency workflow is fully operational and connected to the internet, it's time to address an equally important concern: securing the workflow and its exposed attack surface.
+
+Securing your agentic workflow
+
+Now for the part that keeps me up at night. These workflows are powerful, but they can also become a backdoor if you're not careful. External APIs, sensitive data, LLMs making autonomous decisions… all of it opens the door to misconfigurations, data leaks, and unintended consequences.
+
+This section is dedicated to helping you ensure that your AI-driven automation doesn't just function correctly but does so securely, reliably, and with appropriate governance in place.
+
+Agentic workflows typically operate across multiple trust boundaries: they receive data from users, interact with third-party services such as OpenAI, Pinecone, VirusTotal, or Shodan, and sometimes even publish outputs to public dashboards or Chat interfaces. These dynamic, interconnected systems function like autonomous microservices. And just like in traditional DevSecOps or enterprise SaaS environments, securing such workflows requires a layered and proactive approach.
+
+Security for no-code agents is not merely about protecting secrets or toggling permissions. It involves thinking holistically about the following:
+
+Who or what can trigger this workflow?
+What data enters and exits the system?
+Where are credentials stored, and how are they scoped?
+Can outputs be manipulated through prompt injection or malformed data?
+Are logs, audit trails, and error handling robust enough to support incident response?
+
+Whether you're using these workflows internally for recon automation or exposing agentic capabilities to customers or analysts through a Chat interface, the principles of least privilege, input/output validation, credential scoping, and observability apply.
+
+The workflows you build with AI agents and tools such as n8n are no longer just static sequences; they're intelligent, evolving systems. And like any intelligent system, they need to be secured with intention and maintained with discipline. In the sections that follow, we'll outline both foundational safeguards and advanced practices you can implement to harden your recon agents, ensuring that they remain trustworthy as they scale.
+
+What you should always do
+
+The following best practices form the baseline security posture for any agentic workflow built with n8n. Treat these not as optional hardening steps, but as default safeguards that should be applied from day one:
+
+Use environment variables: Seriously, don't be the person who leaks API keys on GitHub. Instead, store them in .env files or within n8n's built-in credential manager.
+Limit permissions: Use least-privilege principles for API keys and connected services. For example, don't use an admin OpenAI key if a read-only key suffices.
+Sanitize inputs: Treat user-submitted data carefully, especially when passed into tools such as eval, embedding, or when making API requests.
+Monitor workflow executions: n8n provides an execution log. Enable it and review activity regularly to catch anomalies or unauthorized runs.
+Restrict public access: If you're exposing a hosted chat agent or webhook URL, be sure to limit access where possible through tokens, IP whitelists, or rate-limiting proxies.
+Optional, but strongly recommended
+
+These practices are not mandatory for every setup, but omitting them significantly increases the risk of data exposure, abuse, or operational blind spots as workflows scale:
+
+Add authentication to hosted chat endpoints: Use basic auth, OAuth, or your own verification layer to prevent misuse of the public chat interface
+Enable audit logging: Store logs in an external system (e.g., Elasticsearch or CloudWatch) to maintain an immutable audit trail
+Encrypt sensitive output: If you're storing output files (e.g., HTML reports or merged JSON) on disk or in cloud storage, use encryption at rest
+Isolate vector DBs: If you're using Pinecone, create a dedicated namespace or index per workflow type to prevent data leakage across projects
+Rotate secrets regularly: Create a habit of rotating API keys and updating credentials in your n8n environment every 30–90 days
+Summary
+
+In this chapter, we transformed agentic AI from concept to reality by building our first functional security workflow in n8n. Starting with installation and Docker configuration, we established a production-ready environment capable of supporting Python scripting, MongoDB connectivity, and advanced API integrations. We then connected multiple intelligence layers (OpenAI for reasoning and threat feeds such as AbuseIPDB, VirusTotal, GreyNoise, OTX, and urlscan for enrichment), turning static automation into dynamic, context-aware decision-making. Our no-code recon bot demonstrated how to chain subdomain enumeration, DNS resolution, port scanning, and Shodan lookups into a single, intelligent pipeline that outputs structured HTML reports.
+
+Finally, we elevated our workflow by implementing a RAG system with Pinecone, enabling natural language conversations with our recon data, a significant leap from simply collecting data to truly reasoning about it. As you move forward, remember that securing these agentic workflows is not optional; from environment variables and input sanitization to credential rotation and audit logging, the principles covered here ensure that your intelligent agents remain both powerful and trustworthy as they scale.
+
+In the next chapter, we will apply these foundations to attack surface management, building autonomous workflows that continuously discover, monitor, and assess your organization's external attack surface.
+
+Get this book's PDF copy, code bundle, and more
+
+Scan the QR code (or go to packtpub.com/unlock). Search for this book by name, confirm the edition, and then follow the steps on the page.
+
+Note: Have your invoice handy. Purchases made directly from the Packt website don't require an invoice.
+
+table of contents
+close x
+Agentic AI for Offensive Cybersecurity
+
+Orhan Yildirim
+
+Published by Packt Publishing
+queue
+0% complete
+Content Progress 0% completed
+Approx. 10 hours left
+Collapse
+Contents
+Highlights
+Preface
+Part 1: Fundamentals Of Agentic AI
+Chapter 1: Introduction To Agentic AI
+Chapter 2: AI Frameworks For Security Automation
+Part 2: Building And Orchestrating AI Workflows
+Chapter 3: Building Your First AI Workflow In N8n
+Technical requirement
+Setting up n8n for agentic workflows
+Show More Items
+Connecting OpenAI and threat intelligence APIs
+Show More Items
+Designing your first recon bot with no-code agents
+Show More Items
+Implementing a RAG system on n8n
+Securing your agentic workflow
+Show More Items
+Summary
+Get this book's PDF copy, code bundle, and more
+Chapter 4: Agentic AI For Attack Surface Management
+Chapter 5: Internal Network And PCI Segmentation Testing
+Chapter 6: Web Application Testing With Agentic AI
+Part 3: Exploitation, Reporting, And Continuous Intelligence
+Chapter 7: Exploitation, Payload Generation, And Reporting
+Chapter 8: Learning, Research, And CTI Agents
+Chapter 9: Scaling And Ethical Considerations
+Chapter 10: Unlock Access To The Code Bundle And The PDF Version
+Other Books You May Enjoy
+Index
+search
+settings
+Chapter 3: Building Your First AI Workflow in n8n
+queue
+Agentic AI for Offensive Cybersecurity

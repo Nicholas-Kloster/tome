@@ -1,0 +1,619 @@
+4
+Agentic AI for Attack Surface Management
+
+This chapter marks a significant step forward in our journey from basic recon automation to building a sophisticated, no-code attack surface management (ASM) system powered by agentic AI design. We'll move beyond theoretical workflows and start crafting a practical, real-world ASM agent that reflects the way modern red teams and bug bounty hunters operate. The aim is to use powerful, open source tools from the offensive security community and orchestrate them seamlessly using n8n, without writing traditional scripts or shell commands.
+
+Throughout this chapter, we'll rebuild and extend our previous recon bot, transforming it into an agentic ASM solution that performs deep reconnaissance on any target. This will include techniques such as discovery, subdomain enumeration, service discovery, HTTP-based asset resolution, and technology stack fingerprinting. To do this effectively, we'll rely on many of the most widely used tools from GitHub that have become staples in the security community, such as subfinder, aiodnsbrute, assetfinder, shuffledns, httpx, nmap, and nuclei, among many others.
+
+Instead of introducing these tools as isolated command-line scripts, we'll demonstrate how to wire them into a larger agentic automation system using n8n. The system will dynamically collect, parse, and normalize its output and store the data in a structured backend such as MongoDB storage for further processing. Our objective isn't just to execute scans but to construct a long-living, loopable ASM agent that can operate continuously and integrate with large language models (LLMs) for contextual awareness.
+
+This chapter will highlight how these tools can be connected and how they can be optimized for speed, reliability, and integration. We'll focus on tools that support automation-friendly outputs (such as JSON), can run inside containers, and are well-maintained in the open source ecosystem. Whether it's passive data gathering through sources or active endpoint probing with tools such as subfinder and dnsx, we'll cover a variety of use cases while maintaining our modular architecture with n8n at the center.
+
+We will cover the following topics:
+
+Building an agentic AI ASM workflow
+Integrating Asset Discovery, Enumeration Fingerprinting, and Vulnerability Detection
+
+By the end of this chapter, you'll have the blueprint for an agentic ASM system that is both powerful and extendable. One that allows you to scale up recon activities without the complexity of scripting, and that opens the door to fully autonomous security agents making decisions on your behalf.
+
+Building an agentic AI ASM workflow
+
+To make ASM truly autonomous, we need more than just automation scripts; we need a reasoning agent that can selectively trigger workflows, maintain memory, and leverage structured tools. In this section, we explore a modular agentic AI design that orchestrates discovery, enumeration, and vulnerability detection using open source tools and real-time reasoning.
+
+The following is a high-level overview of the core capabilities showcasing how a central AI agent is designed to manage and coordinate multiple tasks involved in ASM:
+
+Trigger workflows dynamically based on user input or background triggers
+Store memory and context in a Postgres database
+Run open source tools for asset discovery, fingerprinting, and vulnerability detection
+Query a database for already discovered data
+Involve human feedback when necessary, ensuring accuracy and relevance
+
+In this model, we deliberately avoid relying on AI alone to prevent hallucination and unfounded assumptions. Each agent workflow is grounded in real, reproducible data produced by trusted open source tools.
+
+The goal is to ensure traceability and reliability while reducing false positives, which is critical when dealing with complex cloud-native environments.
+
+The following diagram shows the high-level structure of an agentic ASM system, where a central AI agent orchestrates discovery, enumeration, vulnerability detection, and data querying workflows:
+
+Figure 4.1 – Agentic AI for ASM
+
+Let's first examine the configuration of the AI Agent node. As discussed in earlier chapters, we'll begin by selecting a LLM. In this case, we'll define the OpenAI API key and choose the gpt-4o-mini model. For this agent, we also need to define a custom system prompt. This prompt should outline the workflow logic, the tools the agent is allowed to use, and how it should interact with the user. These specifications are crucial for ensuring the agent behaves consistently and performs its tasks as expected.
+
+In the AI Agent node's Parameters panel, add the following system prompt to define tool usage, decision boundaries, and interaction patterns:
+
+{{ $now }}
+
+## System Prompt: Attack Surface Management (ASM) Agent
+
+You are an **Attack Surface Management (ASM) Agent** responsible for orchestrating a multi-stage scanning workflow on a given domain. Your primary objective is to assess and manage the external attack surface of any domain provided by the user.
+
+You are connected to the following tools:
+
+- **DB Query Tool**: Retrieves historical scan data and metadata from a domain database.
+- **Asset Discovery Tool**: Discovers all visible subdomains and infrastructure assets associated with the domain.
+- **Enumeration & Fingerprinting Tool**: Enumerates services and fingerprints technologies across discovered assets.
+- **Vulnerability Detection Tool**: Scans for security vulnerabilities across the enumerated assets.
+
+---
+
+### Your Behavior
+
+#### Step 1 – Check for Historical Data
+When a user gives you a domain (e.g., `"example.com"`), you must first call the **DB Query Tool** using the following input format:
+
+"domain.com"
+
+
+Based on the tool's response:
+If the domain has no record, inform the user:
+
+"There is no historical record for this domain. Would you like me to initiate a new attack surface scan?"
+
+If a record exists, respond:
+
+"The last scan for this domain was on [last_scan_date]. Would you like me to initiate a new scan?"
+
+
+#### Step 2 – Wait for User Approval
+Do not proceed unless the user explicitly approves starting a new scan. If they respond with "yes", continue to Step 3.
+
+
+#### Step 3 – Execute the Scanning Workflow
+Sequentially trigger the following tools in this exact order, using the input:
+
+"domain.com"
+
+1. Asset_Discovery Tool
+2. Enumeration_Fingerprinting Tool
+3. Vulnerability_Detection Tool
+
+Wait for each tool to complete before moving to the next.
+
+
+#### Step 4 – Final Report
+Once all tools finish running, respond:
+
+"The attack surface scan for [domain] is complete. Assets have been discovered, fingerprinted, and scanned for vulnerabilities."
+
+
+
+### Special Instructions
+Always use the input format below when calling tools:
+
+"domain": "<domain-name>"
+
+If the user manually asks about database history (e.g., "Check from database"), use the DB Query Tool to answer.
+
+Never skip the database check step.
+You only coordinate the tools you do not perform any scanning yourself.
+Responses should remain clear, professional, and concise.
+
+As for the tool configurations for the agent, each tool shown in the main workflow (Figure 4.1) represents a separate, self-contained workflow that will be defined and implemented later in this chapter. As a parameter, we've defined a custom field called domain. By passing the AI agent's generated query as the value for this parameter, we can ensure that the agent sends its query/input to the target workflow:
+
+Figure 4.2 – Passing the domain variable into a tool configuration
+
+Rather than breaking each stage into separate agents, the workflows here (Asset Discovery, Enumeration Fingerprinting, and Vulnerability Detection) are designed as modular tool chains. Each one is triggered by the core AI agent and executed with a combination of bash commands, API calls, or script execution, allowing for full transparency and control.
+
+In the following sections, we will break down each workflow individually and show how they can be implemented using open source tooling and a centralized agentic orchestration layer.
+
+Integrating Asset Discovery, Enumeration Fingerprinting, and Vulnerability Detection
+
+In this section, we'll begin configuring the three core workflows that will operate under the control of an AI agent: Asset Discovery, Enumeration Fingerprinting, and Vulnerability Detection. These workflows represent foundational stages in any ASM system and serve as modular building blocks that can be reused, extended, or fine-tuned for different environments.
+
+Each workflow will chain together multiple open source security tools, many of which are widely used in offensive security and bug bounty ecosystems. One of the major advantages of leveraging open source tooling is the ability to work with outputs in standardized, grep-friendly formats such as CSV, JSON, or XML. This allows seamless integration across different steps, enabling smooth data flow and logic-based branching.
+
+For these workflows, we will primarily use JSON output formats, as they are both easy to parse and natively supported by most modern security tools. In certain stages, particularly when mapping or cleaning raw output, we will incorporate lightweight JavaScript functions to transform the data before passing it along to the next step.
+
+The choice to use scripting in a few places is purely pragmatic: it allows us to reduce visual clutter in the workflow UI by avoiding an excessive number of intermediary nodes. However, this is not a requirement; with more nodes, you could absolutely build these workflows entirely without code, relying only on the drag-and-drop capabilities of the automation framework.
+
+As we move forward, we'll walk through each workflow in detail, outlining:
+
+Which tools are being used
+What parameters are configured by the AI agent
+How outputs are parsed and forwarded
+
+The ultimate goal is to create robust, reusable, and autonomous workflows that support continuous asset intelligence without requiring human micromanagement at every step. This lays the groundwork for a scalable, AI-driven ASM pipeline that can be reused across engagements and easily integrated into both red and blue team operations.
+
+We now begin designing the Asset Discovery workflow, which functions as the first tool invoked by the main agentic workflow shown in Figure 4.1. In the following sections, we will build this workflow step by step before moving on to the remaining tools in the ASM pipeline.
+
+Stage 1 – Asset Discovery workflow
+
+As defined in the system prompt, this is the first workflow to be executed in the ASM pipeline.
+
+The nodes used in this workflow include several popular open source tools for subdomain enumeration, all of which support JSON output: aiodnsbrute, subfinder, assetfinder, and shuffledns. These tools are executed using the SSH node, allowing us to input SSH login credentials and run the enumeration process on one or multiple remote servers, supporting parallelized execution:
+
+Figure 4.3 – Asset Discovery workflow
+
+In addition to these, we make use of workflow nodes, such as Set, Code, Merge, If, and MongoDB:
+
+Figure 4.4 – The Set, Code, Merge, If, and MongoDB nodes
+
+The Set node, labeled Domain1, is where we assign the domain parameter received from the agent. This naming convention is intentional: by using a generic node name at the beginning, we preserve structural integrity and compatibility in case we later want to implement a cluster-based architecture with multiple agents coordinating.
+
+The next step involves checking MongoDB to see whether any records exist for the given domain. The workflow connects to the database using the MongoDB node and performs a lookup.
+
+Notice that both outcomes of the If node (whether the domain exists in the database or not) continue the Asset Discovery workflow. This is by design. If a record already exists, we refresh and update the discovery data; if no prior record is found, the workflow proceeds with full asset discovery from scratch.
+
+This approach ensures that the ASM process is idempotent and state-aware, capable of maintaining and updating domain intelligence in a continuous and scalable manner. It also provides the AI agent with contextual data to determine whether a newly discovered subdomain or IP warrants further scanning or should be deprioritized due to previous analysis.
+
+With the domain context established and state validation complete, the workflow now shifts into active reconnaissance. In this phase, the agent begins subdomain enumeration by orchestrating a sequence of specialized tools, each executed as part of a dedicated enumeration workflow. This design allows the agent to perform scalable and repeatable discovery while maintaining clear separation between coordination logic and execution.
+
+Subdomain Enumeration flow
+
+At this stage of the workflow, we initiate the Subdomain Enumeration process:
+
+Figure 4.5 – The Subdomain Enumeration process
+
+The first tool we run is aiodnsbrute, a high-performance, asynchronous DNS brute-forcing utility designed specifically for discovering subdomains efficiently. It leverages asynchronous DNS queries to achieve much faster resolution compared to traditional brute-force tools, making it highly effective for large-scale reconnaissance operations.
+
+You can access and download the tool from the official GitHub repository: https://github.com/blark/aiodnsbrute.
+
+In our workflow, we integrate aiodnsbrute using an SSH node within the n8n platform. This allows us to execute the tool remotely on one or more servers, simply by providing valid SSH credentials and specifying the necessary command-line arguments. This setup not only distributes the load but also ensures that the scanning process does not consume local resources or expose the scanning system's IP address.
+
+The tool outputs results in a structured, grep-friendly format, which makes it ideal for downstream parsing and integration into our broader ASM pipeline. After execution, the results will be mapped and stored in MongoDB for historical tracking and correlation with other phases, such as fingerprinting and vulnerability detection.
+
+Here is how the SSH node is configured to run aiodnsbrute:
+
+Figure 4.6 – The aiodnsbrute node
+
+As seen in the screenshot, we've configured the SSH node to execute the tool using specific expressions and dynamic inputs. Here is the command used to run aiodnsbrute:
+
+/home/kali/.local/bin/aiodnsbrute -w 2m-subdomains.txt -r resolvers-1.txt --gethostbyname {{ $json.domain }} --verify -o json -f aiodnsbrute-{{ $json.domain }}.json
+
+Let's break down the command used:
+
+-w 2m-subdomains.txt: This defines the wordlist to be used during brute-force subdomain enumeration. We are using a two-million-entry subdomain wordlist, which provides broad coverage across common and obscure subdomain patterns. You can download this wordlist from the following link: https://wordlists-cdn.assetnote.io/data/manual/2m-subdomains.txt.
+-r resolvers-1.txt: We use a custom list of reliable DNS resolvers to handle large-scale resolution without hitting rate limits or getting blocked. The quality of DNS resolvers has a major impact on the accuracy and speed of subdomain enumeration. A robust resolver list can be found at https://github.com/trickest/resolvers/blob/main/resolvers.txt.
+--gethostbyname {{ $json.domain }}: This expression dynamically injects the domain value passed by the AI agent. In n8n, {{ $json.domain }} is used to reference the domain field from upstream nodes, enabling us to reuse the workflow for any target.
+--verify: This flag ensures that the tool only returns subdomains that successfully resolve, reducing noise from false positives.
+-o json: This sets the output format to JSON, which is easier to parse and store for later steps in the ASM pipeline.
+-f aiodnsbrute-{{ $json.domain }}.json: This defines the output filename dynamically based on the input domain.
+
+This configuration enables our asset discovery agent to run high-volume, accurate subdomain enumeration jobs on remote servers, while producing structured results ready for analysis and enrichment.
+
+After completing subdomain enumeration with aiodnsbrute, we'll enhance our coverage using another widely adopted tool, subfinder. This utility is part of the ProjectDiscovery toolkit and is known for its speed, reliability, and ability to aggregate subdomains from dozens of passive data sources. It's a staple in both reconnaissance and bug bounty workflows and serves as an ideal complement to brute-force-based tools such as aiodnsbrute.
+
+You can download subfinder from its official GitHub repository: https://github.com/projectdiscovery/subfinder.
+
+Just like with aiodnsbrute, we'll use an SSH node in n8n to run subfinder directly on a remote machine where the tool is installed. This approach enables you to keep your n8n workflows lightweight while offloading intensive recon tasks to dedicated scanning infrastructure:
+
+Figure 4.7 – The subfinder node
+
+As shown in the screenshot, we'll execute the following command inside the SSH node:
+
+/usr/bin/subfinder -silent -duc -d {{ $('Merge').item.json.domain }} -rL resolvers.txt -oJ -o subfinder-{{ $('Merge').item.json.domain }}.json
+
+Let's break down what each parameter does and why we're using it:
+
+-silent: Suppresses verbose output, ensuring a cleaner SSH execution log.
+-duc: Performs DNS resolution to verify that each discovered subdomain actually resolves (this helps reduce noise).
+-d {{ $('Merge').item.json.domain }}: Injects the dynamic domain value using n8n's expression syntax, referencing the domain selected in the merged input.
+-rL resolvers.txt: Specifies a custom list of DNS resolvers to ensure faster and more reliable lookups. You can use a high-quality, community-maintained DNS resolver list to improve resolution speed and reliability.
+-oJ: Outputs the results in JSON format, which is ideal for parsing and processing in subsequent n8n nodes.
+-o subfinder-{{ $('Merge').item.json.domain }}.json: Saves the output to a domain-specific file. This helps keep your recon data organized per target.
+
+Using subfinder in tandem with aiodnsbrute gives us both passive and active subdomain enumeration coverage, ensuring that we don't miss any potential attack surface. As we progress, we'll normalize these outputs and use them for IP resolution, port scanning, and later, correlation with threat intelligence sources.
+
+To further expand our subdomain enumeration coverage, we'll introduce another passive tool: assetfinder by Tomnomnom. This utility is a fast and efficient way to discover subdomains using passive data sources such as crt.sh, ThreatCrowd, and others. It's widely trusted among bug bounty hunters and recon specialists due to its simplicity and speed:
+
+Figure 4.8 – The assetfinder node
+
+You can find the tool at its official GitHub repository: https://github.com/tomnomnom/assetfinder.
+
+Just like the previous tools, we'll run assetfinder via an SSH node inside n8n. The command we use is tailored to extract clean subdomain data and output it in JSON format:
+
+/home/kali/go/bin/assetfinder --subs-only {{ $json.domain }} | jq -R -s -c 'split("\n")[:-1]' | tee assetfinder-{{ $json.domain }}.json
+
+Here's what each part does:
+
+/home/kali/go/bin/assetfinder --subs-only {{ $json.domain }}: This executes the tool to find subdomains for the given domain. The --subs-only flag restricts output to only valid subdomains (no IPs or unrelated references).
+{{ $json.domain }}: This expression dynamically injects the domain value, likely passed from an earlier node.
+| jq -R -s -c 'split("\n")[:-1]': Since assetfinder returns plain text with one subdomain per line, we use jq to transform the list into a clean JSON array. The [:-1] part trims the trailing empty line.
+| tee assetfinder-{{ $json.domain }}.json: This saves the JSON array to a file named specifically for the target domain, allowing us to retain structured output for logging and further processing.
+
+By layering assetfinder on top of aiodnsbrute and subfinder, we expand the breadth of subdomain enumeration while intentionally introducing result overlap across multiple independent tools. This overlap allows us to cross-validate discovered subdomains, reduce false positives, and minimize the risk of missing assets due to tool-specific limitations. Later, we normalize all collected outputs and resolve them to IP addresses to support downstream port scanning and enrichment.
+
+To finalize our subdomain enumeration process, we'll add shuffledns, a powerful and aggressive DNS resolution tool developed by Project Discovery. Unlike purely passive tools such as assetfinder and subfinder, shuffledns performs brute-force DNS enumeration using a high-performance resolver engine. This means it can discover subdomains that may not be listed in public data sources, making it ideal for completeness and deep coverage.
+
+You can get it from the official GitHub repository: https://github.com/projectdiscovery/shuffledns.
+
+Figure 4.9 – The shuffledns node
+
+In our workflow, we execute the following command using an SSH node, similar to how we ran previous tools:
+
+/home/kali/go/bin/shuffledns -duc -silent -r resolvers.txt -d {{ $('Merge').item.json.domain }} -w 2m-subdomains.txt -j -o shuffledns-{{ $('Merge').item.json.domain }}.json -mode bruteforce
+
+Let's break down the command and its parameters:
+
+-duc: Disables the update check for performance and consistency in CI-like environments.
+-silent: Suppresses verbose logging to keep output clean.
+-r resolvers.txt: Specifies the list of public DNS resolvers to use. This is critical for bypassing local resolver limitations and improving resolution speed.
+-d {{ $('Merge').item.json.domain }}: Specifies the target domain dynamically from a previous node in the workflow.
+-w 2m-subdomains.txt: Provides a large wordlist (two million entries) for brute-forcing potential subdomains.
+-j: Outputs results in JSON format, making it easier to parse and integrate into our n8n pipeline.
+-o shuffledns-{{ $('Merge').item.json.domain }}.json: Saves the output into a file named uniquely for each target domain.
+-mode bruteforce: Ensures that the tool strictly performs brute-force enumeration rather than passive scraping.
+
+By including shuffledns, we complete our subdomain enumeration step with four complementary tools:
+
+aiodnsbrute for async brute-force with DNS verification
+subfinder for passive and reliable enumeration
+assetfinder for fast results from known sources
+shuffledns for deep, brute-force-based discovery
+
+Each tool brings its own strengths and data sources, giving us a more diverse and redundant subdomain dataset.
+
+Finally, while this sequence provides excellent coverage for most recon workflows, you are encouraged to customize your approach. You may wish to:
+
+Add additional tools such as amass, dnsx, or chaos-client
+Incorporate permutation or mutation-based techniques
+Split subdomain enumeration into a dedicated workflow for scalability
+
+After running multiple tools and gathering a broad list of subdomains, we now have a valuable dataset regardless of whether these subdomains are currently active. The fact that a subdomain was discovered by a reconnaissance tool means it was once live, is potentially still live, or may be reused in the future. Rather than discarding this data, the smartest move is to persist it for long-term use.
+
+Storing data in MongoDB
+
+By storing each tool's output in a MongoDB collection, we build a historical repository that can later inform analysis, pattern recognition, and AI-based reasoning. This allows our agentic system to comment not just on current exposure, but also on past or reappearing infrastructure. For this purpose, we'll use two key nodes in the workflow: a Code4 node to transform and prepare the data, and a MongoDB3 node to insert it into the database. This approach not only makes our recon smarter but also future-proofs our threat intelligence workflows.
+
+At this stage, we leverage the Code node as a flexible transformation layer, allowing us to inject custom JavaScript or Python logic into the workflow. We use this node to map and normalize the data collected during the subdomain enumeration phase, consolidating outputs from multiple tools into a structured format that can be reliably stored and analyzed downstream:
+
+Figure 4.10 – Mapping the collected data
+
+Although the core philosophy of this project is to minimize code usage, there are moments when small snippets of logic significantly improve clarity and reduce workflow complexity. In this case, the Code4 node plays a critical role in shaping and structuring the subdomain enumeration results before they are inserted into MongoDB. Rather than using multiple Set, Merge, and Edit nodes to manipulate the structure, this brief JavaScript function consolidates all outputs from aiodnsbrute, assetfinder, subfinder, and shuffledns into a single, organized JSON object. It also ensures that each entry includes _id, timestamps (createdAt and updatedAt), and a nested toolResults object for better tracking and querying later. This approach keeps the workflow clean, readable, and efficient without abandoning the no-code spirit.
+
+Here is the Code node logic responsible for normalizing and merging outputs from aiodnsbrute, assetfinder, subfinder, and shuffledns into a unified document before persistence:
+
+return [
+  {
+    json: {
+      _id: $('Merge1').first().json._id.$oid,  
+      domain: $('Merge1').first().json.domain,
+      createdAt: $('Merge1').first().json.createdAt,
+      updatedAt: new Date().toISOString(),
+      toolResults: {
+        aiodnsbrute: {
+          output: $('cat-aiodnsbrute1').first().json.stdout
+        },
+        assetfinder: {
+          output: $('cat-assetfinder1').first().json.stdout
+        },
+        subfinder: {
+          output: $('cat-subfinder1').first().json.stdout
+        },
+        shuffledns: {
+          output: $('cat-shuffledns1').first().json.stdout
+        }
+      }
+    }
+  }
+];
+
+After collecting subdomain enumeration results from various tools, we want to store this data in a structured and persistent format.
+
+The MongoDB3 node is responsible for updating or inserting this information into our MongoDB database.
+
+The following key fields are parameters of the MongoDB node, including Operation, Collection, Update Key, and Fields. We'll first provide a high-level overview of each, followed by a more detailed explanation after Figure 4.11:
+
+Operation: This defines the type of action to be performed against the MongoDB database. This can include creating new records, updating existing ones, deleting data, or retrieving documents.
+Collection: A collection is the logical container where MongoDB stores documents, similar to a table in relational databases. This field specifies which dataset the operation will be applied to.
+Update Key: This identifies the field used to uniquely match a document during update operations. MongoDB uses this key to locate the correct record and apply changes only to that specific document.
+Fields: This defines which attributes of a document will be written or updated in the database. It allows precise control over the data model, ensuring consistency while avoiding unnecessary or redundant data storage.
+
+Figure 4.11 – The MongoDB3 node
+
+We use a preconfigured MongoDB credential (e.g., MongoDB account Packt) to securely connect to the database.
+
+In the following breakdown, we detail how these fields are populated and explain the design considerations that informed each configuration decision:
+
+Operation – Update: This operation checks whether a document with the specified _id value already exists. If it does, the node updates the existing record. When Upsert is enabled, the operation will automatically create a new document if no matching record is found. This ensures that the workflow can safely handle both first-time discoveries and subsequent updates without requiring separate insert and update logic, preventing duplicates while maintaining a continuous historical record.
+Collection – domains: The data is stored in the domains collection, where each document represents a unique domain and its related reconnaissance results.
+Update Key – _id: The _id field is used to identify which document to update. This ID is passed from the Code4 node and ensures precise targeting of the record.
+Fields: We selected the following fields to support continuous and repeatable subdomain enumeration without creating duplicate domain records over time:
+createdAt: Timestamp when the domain was first identified
+updatedAt: Current update time (reflecting the latest scan)
+toolResults: JSON object containing outputs from all subdomain enumeration tools used (e.g., aiodnsbrute, subfinder, assetfinder, and shuffledns)
+
+Since the enumeration workflow may run repeatedly for the same domain, the createdAt field allows us to preserve when the domain was first discovered, establishing a clear historical baseline. The updatedAt field, on the other hand, records when the domain entry was last modified, making it possible to track when new subdomains were discovered or when existing reconnaissance data was refreshed during subsequent runs.
+
+The toolResults field is intentionally stored and updated on every execution because each enumeration cycle may yield new or differing results from the underlying tools. Persisting these raw outputs enables incremental enrichment of the domain record and allows the agentic system to reason over changes, correlations, and tool-specific findings over time rather than treating each run as an isolated event.
+
+Upsert is enabled to support this model. When enabled, it ensures that a domain is created only once and subsequently updated on future runs, preventing duplicate records while allowing the database to evolve as new reconnaissance data becomes available.
+
+This setup allows us to build a rich and queryable historical record of domains and subdomains, including which tools detected them and when. Such data becomes incredibly valuable in agentic workflows, as it can support AI-driven reasoning, help identify trends over time, and ensure visibility even for temporarily inactive assets.
+
+After completing the subdomain enumeration phase using multiple tools, we now have a robust list of potential assets, some of which may be currently active, others perhaps deprecated or dormant. Regardless of their current state, these entries are valuable and have been preserved in our database for long-term intelligence and historical tracking.
+
+Identifying live domains
+
+The next logical step in our agentic workflow is to determine which of these subdomains are currently live. To accomplish this, we use the dnsx tool, which allows us to programmatically resolve each subdomain and enrich the results with additional metadata such as associated IP addresses, CDN presence, and ASN information. This is a lightweight yet effective way to validate the reachability of subdomains at scale without relying on heavy infrastructure.
+
+Here is the dnsx node configuration used to resolve subdomains and identify live assets within the workflow:
+
+Figure 4.12 – The dnsx node
+
+We use the following command within an SSH node to run dnsx and capture live subdomain results in a structured JSON file:
+
+echo "{{ $json.subdomains.join('\n') }}" | /home/kali/go/bin/dnsx -all -cdn -asn -silent -j -o dnsx-{{ $('Merge1').item.json.domain }}.json
+
+This command reads the list of subdomains dynamically, pipes it into dnsx, performs multiple checks, including DNS resolution, CDN, and ASN detection, and stores the structured output in a file named after the target domain. This output will later be used for further analysis, storage, and visualization within the ASM pipeline.
+
+With this step complete, we now have a clear, actionable subset of subdomains that are currently live and reachable, laying the foundation for the next phases, such as port scanning, technology fingerprinting, and service enumeration.
+
+Updating live subdomain records on MongoDB
+
+After successfully identifying live subdomains using the dnsx tool, it is essential to persist this enriched DNS information back into our central MongoDB database. To maintain consistency with the architecture we've followed so far, we use a combination of a Code node and a MongoDB node within the n8n workflow.
+
+The output from dnsx includes valuable DNS records such as TTL, resolver, A, AAAA, CNAME, MX, NS, TXT, and SOA records for each live subdomain. These details provide deeper visibility into the DNS configuration and can be critical for further fingerprinting, risk analysis, or historical tracking.
+
+In this step, the Code node is used to structure the dnsx output in the same format we've been using for other tool results, nesting the data under the toolResults object for the respective domain entry. Then, the MongoDB node performs an update operation to either insert new DNS data or enrich the existing record with the latest findings.
+
+As seen in the following screenshot, this approach ensures that each domain record in our MongoDB database is continuously updated and enriched with new data collected during the ASM workflow, forming a comprehensive and queryable knowledge base for both real-time and retrospective analysis:
+
+Figure 4.13 – MongoDB records
+
+With the asset discovery phase complete, we now move beyond identifying what exists and begin focusing on understanding what those assets actually are. At this point, the workflow transitions from discovery and validation into deeper analysis, where live subdomains become candidates for systematic enumeration and fingerprinting. This marks a clear shift from surface-level visibility to contextual intelligence, setting the foundation for meaningful security assessment in the stages that follow.
+
+Stage 2 – Enumeration Fingerprinting
+
+After identifying which subdomains are live and responsive, our workflow transitions into a critical stage: enumeration fingerprinting. While subdomain discovery provides us with surface-level visibility, it is this phase that truly reveals the identity and nature of the assets we are dealing with. In traditional penetration testing or red teaming, this would be the moment when a skilled analyst shifts from reconnaissance into target profiling. In our agentic automation, we aim to simulate that same sophistication, systematically uncovering which technologies are in use, what ports are exposed, what services are reachable, and what metadata can be extracted without triggering alarms.
+
+This phase is particularly important because it adds depth to the shallow but broad data we collected earlier. Instead of simply knowing that a subdomain exists and is alive, we now extract details such as whether it runs an NGINX or Apache server, whether it's serving content over HTTP/2, whether there's an admin portal exposed, and whether the TLS configuration reveals anything about the infrastructure behind the scenes. Such information is not only helpful for targeting but also serves as an input to the reasoning layer of the agent, which can later prioritize what is valuable, vulnerable, or likely to be out of scope. In essence, this stage acts as the foundation for downstream modules such as vulnerability scanners, tech stack analyzers, or exploit generators.
+
+The fingerprinting process itself is divided into two parallel tracks: HTTP service discovery and port scanning. In the HTTP discovery track, our goal is to scan live subdomains to identify running web services and analyze HTTP response behavior. Using tools such as httpx and get-title, we can fetch server headers, status codes, technologies, and HTML titles. These seemingly simple attributes tell us a great deal. For instance, the server response might expose the presence of WordPress, a specific CDN provider, or a custom 403 page that hints at access control measures. We use n8n's SSH node to run these tools directly on our recon server, keeping everything within the no-code ecosystem, and then parse the output using Code nodes. Once processed, these results are stored in MongoDB under each respective subdomain entry, ensuring data continuity across the workflow.
+
+In the second track, port scanning, we dig deeper into the infrastructure. By performing TCP scans, typically using tools such as nmap, we aim to detect all externally exposed ports and the services running behind them. This is particularly useful for identifying unexpected exposures such as development SSH servers, forgotten file transfer protocol (FTP) instances, or even insecure management interfaces. In our workflow, the port scanning logic mirrors the HTTP scanning pipeline: fetch live subdomains, scan them using a remote SSH-executed tool, parse the results, and store everything back into the database. This modularity not only makes the system extensible but also highly traceable; every tool, every result, and every timestamp is logged, providing a historical view of how an organization's attack surface evolves over time.
+
+Moreover, all data collected in this stage is centrally stored in MongoDB. This allows for seamless querying, enrichment, and reasoning in later stages. For example, a later agent might query for all assets running outdated Apache versions or group subdomains by CDN provider to find anomalies. Storing this data in a structured and searchable format also allows external systems (such as dashboards or SIEM systems) to consume and visualize insights. As this data accumulates over multiple runs, it becomes not just a snapshot but a time-series graph of your attack surface, valuable for detecting drift, misconfigurations, or policy violations.
+
+Ultimately, the enumeration fingerprinting phase transforms your automation from passive discovery to active understanding. It provides the intelligence layer your agent needs to move beyond crawling and into true reconnaissance. And when built with this level of structure and precision, it lays the groundwork for reliable, continuous, and scalable attack surface management that rivals what human red teamers produce manually:
+
+Figure 4.14 – Enumeration Fingerprint
+
+As part of the enumeration fingerprinting process, we start by examining HTTP-exposed services, since web responses often provide the clearest indicators of underlying technologies, configurations, and access boundaries.
+
+HTTP Service Discovery
+
+The first track in the enumeration fingerprinting stage focuses on HTTP service discovery. Here, the objective is to analyze how live subdomains respond over HTTP and HTTPS, and to extract meaningful indicators about the underlying web stack. By inspecting response headers, status codes, supported protocols, and page metadata, the agent begins to infer what technologies are in use and how each asset behaves from an external perspective:
+
+Figure 4.15 – HTTP Service Discovery
+
+In this workflow, we are executing a tool-specific sub-workflow that functions under the control of a parent agent workflow. This design promotes modularity and allows each tool to focus on a specific task without coupling it tightly to the broader orchestration logic. The first node in this sub-workflow is named Domain1, and its purpose is simple yet critical; it receives the target domain passed from the agent. This ensures that the tool operates with scoped, context-aware data, aligning with the agentic architecture where each node or workflow performs a deliberate, goal-driven action.
+
+Once the domain is received, the next step is to fetch all relevant subdomains associated with it. To achieve this, the MongoDB1 node connects to our central database and queries the domains collection to retrieve subdomains that were discovered and stored during earlier reconnaissance activities. This historical dataset ensures that the tool operates on a clean and reliable input set, eliminating the need to repeat prior recon steps unnecessarily.
+
+However, raw database results cannot always be fed directly into a command-line tool. That's where the Code node comes into play. This node is responsible for transforming the subdomain list fetched from MongoDB into a properly formatted string or array, usually a newline-separated list, which is exactly what tools such as httpx expect for input. Without this step, the integration between data and tooling would be fragile or prone to failure.
+
+Following this data preparation, the output from the Code node is passed into the httpx node. This is the heart of the HTTP service discovery process. The httpx tool scans each subdomain for live HTTP services, fetching metadata such as HTTP status codes, redirect behavior, content length, TLS certificate info, page titles, server headers, and technology fingerprints. This information is invaluable for understanding the technology stack and access patterns of each asset. It also provides downstream agents with the intelligence needed to make decisions – for example, whether to scan for WordPress plugins or test for outdated server versions.
+
+Here, you can see the usage of the httpx command:
+
+Figure 4.16 – The httpx node
+
+As illustrated in the workflow, the data obtained from the httpx node is not only collected but also methodically structured and stored. To associate each piece of HTTP fingerprinting data with its corresponding subdomain in the database, we utilize the Loop Over Items node. This node iterates over each individual httpx result to ensure that updates are executed on a per-subdomain basis.
+
+Following this loop, the downstream nodes (MongoDB2, Code2, and MongoDB) form the core of our update mechanism. First, the MongoDB2 node locates the corresponding subdomain record within the database. Then, the Code2 node reformats the raw output from httpx, ensuring that it aligns with our data model and includes only the relevant fields. Finally, the last MongoDB node writes this structured data back into the database under the correct subdomain entry.
+
+This precise, per-item update approach allows us to enrich our asset inventory with dynamic, up-to-date HTTP metadata, making it easier for our AI agents or human analysts to make intelligent decisions downstream. It also preserves historical subdomain scan context while layering on real-time insights from the current enumeration phase.
+
+Here is the code used in the Code2 node:
+
+return {
+  json: {
+    _id:  $input.first().json._id ,
+    "domain": "",
+  "subdomain": "",
+  "dns": {
+    "ttl": $input.first().json.dns?.ttl || 0,
+    "resolver": $input.first().json.dns?.resolver || [],
+    "a": $input.first().json.dns?.a || [],
+    "aaaa": $input.first().json.dns?.aaaa || [],
+    "cname": $input.first().json.dns?.cname || [],
+    "mx": $input.first().json.dns?.mx || [],
+    "ns": $input.first().json.dns?.ns || [],
+    "txt": $input.first().json.dns?.txt|| [],
+    "soa": $input.first().json.dns?.soa || [],
+    "all": $input.first().json.dns?.all || []
+  },
+  "http": {
+    "hash": {
+      "body_md5": $('Loop Over Items').first().json.hash?.body_md5 || "",
+      "header_md5": $('Loop Over Items').first().json.hash?.header_md5 || ""
+    },
+    "cdn_name": $('Loop Over Items').first().json?.cdn_name || "",
+    "cdn_type": $('Loop Over Items').first().json?.cdn_type || "",
+    "port": $('Loop Over Items').first().json.port || 0,
+    "url": $('Loop Over Items').first().json.url || "",
+    "scheme": $('Loop Over Items').first().json.scheme || "",
+    "webserver": $('Loop Over Items').first().json.webserver || "",
+    "content_type": $('Loop Over Items').first().json.content_type || "",
+    "method": $('Loop Over Items').first().json.method || "",
+    "host": $('Loop Over Items').first().json.host || "",
+    "path": $('Loop Over Items').first().json.path || "",
+    "time": $('Loop Over Items').first().json.time || "",
+    "a": $('Loop Over Items').first().json.a || [],
+    "cname": $('Loop Over Items').first().json.cname || [],
+    "tech": $('Loop Over Items').first().json.tech || [],
+    "words": $('Loop Over Items').first().json.words || 0,
+    "lines": $('Loop Over Items').first().json.lines || 0,
+    "status_code": $('Loop Over Items').first().json.status_code || 0,
+    "content_length": $('Loop Over Items').first().json.content_length || 0,
+    "failed": $('Loop Over Items').first().json.failed || false,
+    "screenshot_bytes": "",
+    "headless_body": "",
+    "stored_response_path": $('Loop Over Items').first().json.stored_response_path || "",
+    "screenshot_path": $('Loop Over Items').first().json.screenshot_path || "",
+    "screenshot_path_rel": $('Loop Over Items').first().json.screenshot_path_rel || ""
+  },
+  "tls": {
+    "host": $('Loop Over Items').first().json.tls?.host || "",
+    "port": $('Loop Over Items').first().json.tls?.port || "",
+    "probe_status": $('Loop Over Items').first().json.tls?.probe_status || true,
+    "tls_version": $('Loop Over Items').first().json.tls?.tls_version || "",
+    "cipher": $('Loop Over Items').first().json.hash?.header_md5 || "",
+    "not_after": $('Loop Over Items').first().json.tls?.not_after || "",
+    "not_before": $('Loop Over Items').first().json.tls?.not_before || "",
+    "subject_dn": $('Loop Over Items').first().json.tls?.subject_dn || "",
+    "subject_cn": $('Loop Over Items').first().json.tls?.subject_cn || "",
+    "subject_org": $('Loop Over Items').first().json.tls?.subject_org || [],
+    "subject_an": $('Loop Over Items').first().json.tls?.subject_an || [],
+    "serial": $('Loop Over Items').first().json.tls?.serial || "",
+    "issuer_dn": $('Loop Over Items').first().json.tls?.issuer_dn || "",
+    "issuer_cn": $('Loop Over Items').first().json.tls?.issuer_cn || "",
+    "issuer_org": $('Loop Over Items').first().json.tls?.issuer_org || [],
+    "fingerprint_hash": {
+      "md5": $('Loop Over Items').first().json.tls?.fingerprint_hash.md5 || "",
+      "sha1": $('Loop Over Items').first().json.tls?.fingerprint_hash.sha1 || "",
+      "sha256": $('Loop Over Items').first().json.tls?.fingerprint_hash.sha256 || ""
+    },
+    "wildcard_certificate": true,
+    "tls_connection": $('Loop Over Items').first().json.tls?.tls_connection || "",
+    "sni": $('Loop Over Items').first().json.tls?.sni || ""
+    }
+  }
+};
+
+At first glance, the code used in the Code2 node may seem long or complex to those unfamiliar with JavaScript in no-code environments. However, it's simply a structured transformation: taking each result received from the httpx tool and reshaping it into the proper format for database insertion. A quick scan of the lines reveals a repetitive pattern where each field is extracted and mapped consistently. As mentioned earlier, this logic could have been replicated using multiple dedicated n8n nodes for parsing and formatting. Still, we opted for a single Code node to keep the overall workflow more compact, maintainable, and easier to navigate, especially as the number of processed items grows.
+
+Port Scanning
+
+At this stage, our database contains detailed records for each subdomain with detected HTTP services. However, not every live host will necessarily expose an HTTP service; some may host alternative protocols or appear live only at the DNS level. To capture those cases, we utilize the powerful nmap tool.
+
+Figure 4.17 – Port scanning
+
+In this example, we chose to keep the scan lightweight by targeting only ports 80 and 443, but nmap supports extensive configurations that allow you to scan for a wide range of ports, identify running services, and even perform basic vulnerability detection. Once the scan is complete, nmap provides its output in XML format. To integrate this data into our MongoDB database, we convert the XML output to JSON using the xml2js parser. From there, we format the results to match our data model and update the corresponding subdomain records using MongoDB nodes, ensuring that even non-HTTP but live or interesting services are accurately tracked in our ASM system.
+
+Stage 3 – Vulnerability Detection
+
+Now that we've completed comprehensive subdomain discovery and fingerprinting for our target domain, it's time to move into the vulnerability scanning phase. At this point in the workflow, we have a solid understanding of which subdomains are live and which are hosting web applications. For this example, I've chosen to use Nuclei, a powerful and extensible open source scanner capable of identifying a wide range of web vulnerabilities. Of course, this step is highly customizable; you can integrate multiple tools, whether open source or commercial, to suit the needs of your environment or the scope of the assessment. By connecting these tools directly into the existing agentic workflow, you can perform automated vulnerability scans with minimal effort and ensure that findings are contextually tied to your earlier reconnaissance results.
+
+The following workflow shows how vulnerability scanning is integrated into the agentic pipeline, using previously enumerated assets as structured input for contextual vulnerability detection:
+
+Figure 4.18 – Vulnerability detection
+
+As with previous workflows, we begin this phase by retrieving the necessary input from the AI agent through the Domain1 node. This domain value is passed to a MongoDB1 node, which queries the database to fetch all relevant subdomain data. We then use a Code node to extract and prepare the list of detected URLs associated with those subdomains. These URLs are looped through using a Loop Over Items node, feeding them one by one into Nuclei for vulnerability scanning. Once the scan is complete, the results are passed through another Code node to reformat them into the appropriate database structure. Finally, we use a MongoDB node to update the corresponding subdomain records with the identified vulnerabilities.
+
+This seamless integration ensures that every vulnerability is contextually mapped to the correct asset, maintaining the integrity and traceability of the entire reconnaissance and scanning pipeline.
+
+You can see the command used in the nuclei node here:
+
+Figure 4.19 – The nuclei node
+
+At this stage, we are ready to persist the results of the Nuclei vulnerability scans performed for each subdomain. To maintain a clean and structured schema in our database, we organize these scan results under a dedicated nuclei array within each subdomain's record. This ensures that all vulnerability findings are encapsulated in a consistent and easily queryable format.
+
+To achieve this, we use a dedicated Code node to transform and map the raw Nuclei scan outputs into the target database schema. This node is responsible for aligning each vulnerability finding with its corresponding subdomain record and preparing the data for structured storage. The following screenshot illustrates how this mapping is implemented within the Code3 node:
+
+Figure 4.20 – The Code3 node
+
+Once the individual Nuclei scan result has been normalized and enriched by Code3, the workflow transitions into the persistence phase handled by Code4. While Code3 is responsible for shaping a single vulnerability finding into a clean, self-contained JSON object, Code4 focuses on integrating that object into the broader data model. Specifically, Code4 takes the structured output produced by Code3 and appends it to the existing nuclei array of the corresponding subdomain document in MongoDB. Rather than overwriting previous results or creating fragmented records, this node ensures that each new scan finding is incrementally added to the subdomain's historical scan data. This design allows multiple Nuclei executions over time to be consolidated under a single subdomain entity, preserving scan history and enabling longitudinal analysis, retesting workflows, and correlation across findings.
+
+In effect, Code4 acts as the bridge between transient scan output and durable, queryable security intelligence stored in the database.
+
+Figure 4.21 – The Code4 node
+
+This modular approach provides flexibility for storing multiple scan results over time, allowing historical comparison, retesting tracking, and even integration with dashboards or alerting systems downstream. It also supports scenarios where multiple vulnerability scanners might be used in parallel, all contributing structured data to the same MongoDB backend.
+
+Stage 4 – Database Query Agent
+
+This workflow represents the database query logic used to check whether a domain already exists in the MongoDB collection and perform either an update or an insert operation based on the query result. Let's break down what's happening step by step so that you understand both the logic and the rationale behind it.
+
+In the automation pipeline, we need to avoid redundant entries and ensure data integrity in our MongoDB-backed inventory. To manage this, the workflow you've designed checks whether a given domain already exists in the database before attempting any insert or update operation. This logic is essential, especially when integrating tools and agents that run repeatedly on the same targets.
+
+The following workflow diagram illustrates this decision-driven query and update logic as implemented in n8n:
+
+Figure 4.22 – Database query workflow
+
+The workflow begins with the When Executed by Another Workflow node, indicating that this routine is part of a modular architecture. The next node, Domain1, injects the domain value, typically coming from a previous process or an agent's task.
+
+The MongoDB9 node performs a Find operation on the MongoDB collection, searching for an existing record associated with the given domain.
+
+The result of the database lookup is sent to the If1 node. This is a decision point that checks whether any document was found (i.e., whether the domain already exists in the DB).
+
+The flow proceeds to the Found2 node, where updated data is prepared; this could include refreshed scan results, metadata, or newly discovered assets.
+
+The MongoDB-Update1 node then performs the update on the matched domain record.
+
+In the following screenshot, you can observe the structure of the ASM agent, along with the tools that are directly integrated into it:
+
+Figure 4.23 – ASM agent chat
+
+At this stage, the architecture is designed in a relatively straightforward manner, where each tool operates under the supervision of a single agent. However, this design is merely a starting point; the structure can be significantly enhanced to enable more advanced and modular capabilities.
+
+For instance, each tool within the agent could itself be encapsulated within its own specialized sub-agent. These sub-agents would not only allow better modularization but also facilitate the assignment of distinct roles and responsibilities within the attack surface enumeration process. Furthermore, these agents could be configured to operate using different LLM backends. This would allow the system to dynamically optimize for either cost-efficiency or performance, depending on the context. Models with smaller context windows and lower token usage could be assigned to tasks involving simple parsing or execution.
+
+On the flip side, you'll want the bigger models when things get tricky and require serious reasoning.
+
+Don't treat this setup as gospel. It's a solid starting point that you should hack and improve. You can build upon these workflows using the techniques outlined in this chapter, or extend them further with more advanced agent-based designs as their use cases and environments evolve.
+
+Summary
+
+In this chapter, we've built a proper ASM engine that puts an AI agent in the driver's seat of security tools. By structuring these tools as interconnected workflows, we demonstrated how open source technologies can be combined to perform continuous asset discovery, enumeration, and vulnerability scanning.
+
+We also implemented persistent data storage and conditional database logic to maintain a consistent and repeatable ASM process. As a result, the AI agent can now initiate a full attack surface analysis for a new domain through a simple conversational interaction, establishing a foundation for scalable and extensible autonomous security workflows.
+
+In the next chapter, we'll tackle a real-world compliance challenge, that is, PCI-DSS segmentation testing. You'll learn how to build an agentic workflow that automatically validates whether your network segments are properly isolated, saving hours of manual verification and reducing the risk of audit surprises.
+
+Get this book's PDF copy, code bundle, and more
+
+Scan the QR code (or go to packtpub.com/unlock). Search for this book by name, confirm the edition, and then follow the steps on the page.
+
+Note: Have your invoice handy. Purchases made directly from the Packt website don't require an invoice.
+
+table of contents
+close x
+Agentic AI for Offensive Cybersecurity
+
+Orhan Yildirim
+
+Published by Packt Publishing
+queue
+0% complete
+Content Progress 0% completed
+Approx. 10 hours left
+Collapse
+Contents
+Highlights
+Preface
+Part 1: Fundamentals Of Agentic AI
+Chapter 1: Introduction To Agentic AI
+Chapter 2: AI Frameworks For Security Automation
+Part 2: Building And Orchestrating AI Workflows
+Chapter 3: Building Your First AI Workflow In N8n
+Chapter 4: Agentic AI For Attack Surface Management
+Building an agentic AI ASM workflow
+Integrating Asset Discovery, Enumeration Fingerprinting, and Vulnerability Detection
+Show More Items
+Summary
+Get this book's PDF copy, code bundle, and more
+Chapter 5: Internal Network And PCI Segmentation Testing
+Chapter 6: Web Application Testing With Agentic AI
+Part 3: Exploitation, Reporting, And Continuous Intelligence
+Chapter 7: Exploitation, Payload Generation, And Reporting
+Chapter 8: Learning, Research, And CTI Agents
+Chapter 9: Scaling And Ethical Considerations
+Chapter 10: Unlock Access To The Code Bundle And The PDF Version
+Other Books You May Enjoy
+Index
+search
+settings
+Chapter 4: Agentic AI for Attack Surface Management
+queue
+Agentic AI for Offensive Cybersecurity

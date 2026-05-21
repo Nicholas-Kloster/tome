@@ -1,0 +1,764 @@
+Chapter 4. Running in Production
+
+By now, you have likely deployed your first LLM to run on Kubernetes. It responds to requests, maybe even with decent latency. But production isn’t about working once—it’s about working consistently, at scale and under load.
+
+This chapter is all about that transition. This chapter covers what it takes to make LLM inference stable and efficient in real-world scenarios. This includes expected topics like parameter tuning, along with easily overlooked aspects like runtime memory planning, routing sticky requests to cache-warm replicas, model compression decisions, and advanced topologies that require dedicated network configuration.
+
+Treating a model server like any other container is tempting. Just set a few resource limits, expose a service, and call it a day. But GenAI workloads have unique characteristics (massive models, variable request costs, and GPU-intensive operations) that require specialized configuration. You’ll learn how to configure the platform effectively while avoiding the traps that can quietly erode performance and burn through your GPU budget.
+
+This chapter covers five key areas:
+
+Model and runtime tuning
+
+Selecting, evaluating, compressing, and benchmarking models
+
+Autoscaling
+
+Strategies specific to LLM workloads
+
+Optimizing vLLM startup time
+
+Reducing deployment latency
+
+LLM-aware routing
+
+Intelligent request distribution
+
+Disaggregated serving
+
+Advanced distributed architectures
+
+The most fundamental decision is how to pick and tune a model that matches your use case without wasting compute cycles.
+
+Model and Runtime Tuning
+
+Probably the most important aspect to consider when a team approaches the development of the first real application based on generative AI is the selection of the model to use. Most teams begin with a managed service like OpenAI’s ChatGPT where configuration options are limited. However, in many situations, on-premise infrastructure is a must-have. The selection of the model at that point is critical. This selection is based on many different factors, like type of task, type of workload (i.e., real time versus batch inference), and number of concurrent requests.
+
+The size of the model matters, but two models with the same size might have different model architectures and training techniques, with the consequence that the results of the same query can go from being very accurate to completely wrong.
+
+Given the criticality of this selection, finding a starting point is challenging. The number of models available is very high and new models are published frequently, making the selection process daunting.
+
+There is no silver bullet or single model to rule them all, but the selection process should not consider all models available on Hugging Face. One of the common tasks when developing a predictive AI model includes checking and comparing models trained for the same task, based on their accuracy, so it should be useful to find one or more metrics to compare the accuracy of LLMs.
+
+Traditional predictive AI models are trained to solve specific problems. In contrast, LLMs are trained on vast datasets and can perform multiple tasks. To compare LLMs effectively, first identify the critical task for your application, then select accuracy metrics based on that task.
+
+This phase is critical to guide model selection and base it on specific metrics instead of manual testing. The problem is very complex, and an entire research field about language model evaluation exists to address it.
+
+Language Model Evaluation
+
+The evaluation of a language model can target many different aspects such as measuring how knowledgeable a model is, or the model’s ability to produce content without toxic language, or even how good a model is with reasoning tasks. This definition is not specific to LLMs; the same principle applies to many traditional language models defined before the LLM era.
+
+One of the most important applications of language evaluation is to verify model safety with specific tasks to measure model toxicity or robustness.
+
+Many different projects provide one or more evaluation benchmarks; one of the most-used suites is EleutherAI’s lm-evaluation-harness that includes more than one hundred out-of-the-box tasks. There are other libraries too, and new evaluation techniques are often defined to test the models in scenarios that are increasingly complex.
+
+Traditionally, an evaluation task includes a dataset with a set of inputs and outputs to use (usually as multichoice questionnaires to simplify the analysis), and an evaluation function to compute the metric. This format makes it very easy for a subject matter expert to review the dataset, and it can be easily grouped into subtopics to better categorize the model’s abilities.
+
+Each benchmark is essentially a procedure that invokes the target model with a set of predefined question-answer pairs and analyzes the results, so it takes time (even hours) to run it, and the model must be deployed, so it can be very expensive to perform. Fortunately, for all the most-used models it is possible to find online leaderboards that collect the evaluation results for multiple benchmarks, allowing for easy comparison.
+
+A leaderboard is a table where different models are compared using one or more metrics. At the same time, the usage of similar leaderboards has security and trust implications because there is no way to verify if the published numbers are true without locally re-executing the test. The general advice is to use the leaderboards to perform the initial assessment to produce a short list of models, and then perform additional analysis.
+
+A good starting point is the leaderboard page on the Hugging Face website that links many of them grouped by categories like mathematics abilities or model safety. The Open LLM Leaderboard, for example, compares models across multiple benchmarks, including MMLU (knowledge), HellaSwag (commonsense reasoning), and TruthfulQA (truthfulness).
+
+When you identify models to evaluate locally, understanding how the evaluation process works is essential. See Figure 4-1 for the execution flow of an evaluation request.
+
+Figure 4-1. Language model evaluation execution flow
+
+Given that each task can take multiple minutes to perform, it is usually done asynchronously inside an automated pipeline. For example, the TrustyAI project provides a wrapper of the lm-evaluation-harness library introducing the LMEvalJob CRD to perform the task and to notify when it has completed. A full example can be found in the TrustyAI LM-Eval documentation.
+
+In addition to the hundreds of existing evaluation tasks, you can create a custom one, but then you cannot easily compare different models or a different version of the models using online leaderboards.
+
+One of the most-used benchmarks is Massive Multitask Language Understanding (MMLU) because its dataset covers a large set of multiple-choice questions from various branches of knowledge that are grouped by tasks, including a very large set of topics: abstract algebra, high school European history, high school government, politics, and much more. The same approach has been extended to cover multimodal models by Massive Multi-discipline Multimodal Understanding (MMMU).
+
+While general-purpose benchmarks evaluate fundamental capabilities, production LLM applications often require specialized evaluation tools targeting specific use cases and risks. Retrieval-augmented generation (RAG) systems (see Chapter 8) need metrics that assess both retrieval quality and generation accuracy, while security-focused deployments require vulnerability scanning to identify potential risks like prompt injection or harmful output generation. Two frameworks address these specialized needs: Ragas provides metrics specifically designed for RAG applications, measuring context relevance, answer faithfulness, and retrieval accuracy; while NVIDIA garak is a vulnerability scanner that probes LLMs for security weaknesses, testing resistance to prompt injection, jailbreaking attempts, and generation of harmful content.
+
+Model selection happens early in the project lifecycle, but evaluation doesn’t stop there. The same evaluation techniques become critical when optimizing the model for production. Data scientists and AI engineers initially select the model, but before running it at scale, you need to optimize it. A model can be compressed using quantization techniques, or you can collect production data and use it to distill the model into a smaller one.
+
+Both compression techniques modify the model weights, which impacts overall accuracy. This requires performing the evaluation again to measure the impact. The application of similar techniques can produce a model that is less than half of the original size, doubling or tripling the throughput of the runtime on the same hardware with essentially the same accuracy of the original model. When properly applied, the compressed model can recover more than 99% of the original accuracy.
+
+Language Model Compression
+
+An LLM like Meta-Llama-3.1-8B-Instruct has eight billion parameters. This means that there are eight billion floating point values and each of them is used as weight (multiplier) for the corresponding input of the neural network.
+
+Each floating point value is represented with 16 bits, so the minimal memory requirement to load the model is 16 GB (16 bits x 8 billion). Such neural networks might have numerous layers (say, 32), with each neuron’s output feeding into the subsequent layer, increasing the overall memory footprint of the model. This is called activation, and it is another 16-bit floating point value.
+
+Finally, both the KV cache values and the intermediate output results are represented using 16-bit precision. For more details on this topic, see “Understanding LLM Fundamentals”.
+
+All of these floating point numbers add up to the total memory footprint of an LLM for the GPU memory. The technique to compress the model is called quantization (see the following sidebar).
+
+QUANTIZATION
+
+Quantization is the name of a set of techniques that aims to reduce the total memory footprint using a less precise representation, like an 8-bit floating point (FP8) or an integer representation (INT8). These techniques go beyond simply rounding floating points or reducing decimals. Instead, they involve mechanisms specifically designed to compensate for errors during execution.
+
+Model compression alone isn’t sufficient. If the runtime lacks native quantization support, it must convert the compressed model back to 16-bit precision during processing to evaluate the neural network and produce activations. The sweet spot of quantization is a runtime that has optimized kernel implementations (GPU functions) that can process quantized data end to end. This enables the scalability improvements.
+
+The vLLM runtime has native support for most of the quantization techniques, both on the compression side with the LLM compressor project, but especially on the runtime side with multiple optimized kernels that are automatically enabled when the runtime detects that the model is quantized.
+
+This area of research looks very promising to make LLM serving more cost-effective, potentially becoming the future standard for models and runtimes, but some critical aspects remain. First of all, the specialized kernels that are critical to properly scale quantized models are hardware-specific so not all GPUs support it yet, and in general it is possible to have a dramatic accuracy drop when the quantization goes wrong.
+
+Although the first aspect, ensuring comprehensive GPU coverage, may simply require time, the second aspect demands meticulous control. The compression is not lossless, so it is critical to evaluate the quality of the model after compression to make sure the level of accuracy has not been impacted too much.
+
+There are multiple examples of models that have been quantized to use 8-bit per floating point (FP8) and that have recovered more than 99% of the accuracy of the original model. The library llmcompressor simplifies the whole procedure with built-in calibration. Using the library is quite straightforward, but it requires some knowledge to understand the different parameters (Example 4-1).
+
+Example 4-1. Compress an LLM using llmcompressor
+from llmcompressor.modifiers.quantization import GPTQModifier
+from llmcompressor.modifiers.smoothquant import SmoothQuantModifier
+from llmcompressor.transformers import oneshot
+
+# Select quantization algorithm. In this case, we:
+#   * apply SmoothQuant to make the activations easier to quantize
+#   * quantize the weights to int8 with GPTQ (static per channel)
+#   * quantize the activations to int8 (dynamic per token)
+recipe = [   
+    SmoothQuantModifier(smoothing_strength=0.8),
+    GPTQModifier(scheme="W8A8", targets="Linear", ignore=["lm_head"]),   
+]
+# Apply quantization using the built-in open_platypus dataset.
+oneshot(
+    model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    dataset="open_platypus",   
+    recipe=recipe,
+    output_dir="TinyLlama-1.1B-Chat-v1.0-INT8",   
+    max_seq_length=2048,
+    num_calibration_samples=512,
+)
+
+The recipe defines the quantization pipeline to be applied with one or more techniques.
+
+The scheme W8A8 means that the weight is quantized with 8 bits, and the same for activations.
+
+It is necessary to specify a dataset used to calibrate the quantization.
+
+The output directory will contain the compressed model with all the configuration files (config.json, tokenizer.json, etc.) necessary to serve the model so that the vLLM runtime knows how to load the model without any custom parameters.
+
+A good practice is to use language model evaluation techniques to compute the accuracy metrics of the original model before deployment to production. Furthermore, integrating compression directly into the MLOps/LLMOps pipeline provides an optimized starting point for the system. This approach eliminates the need for custom configuration.
+
+TIP
+
+Model compression is a complex process with significant risks. Improper quantization can dramatically impact model quality, leading to degraded accuracy, hallucinations, or incorrect outputs. While tools like llmcompressor provide calibration features, achieving optimal compression requires expertise and thorough evaluation.
+
+An alternative approach is to use models that have already been professionally compressed and validated by organizations with compression expertise. For example, Red Hat AI on Hugging Face releases pre-compressed models that have been carefully quantized and evaluated, providing production-ready compressed models without the risk of improper compression.
+
+Model Performance Benchmark
+
+Chapter 5 covers how to observe an LLM and which metrics are critical to track usage and system responsiveness, in particular for real-time use cases like a chatbot. Reacting quickly is crucial to resolve latency issues by properly configuring scaling, rate limiting, or even rejecting new requests with appropriate error messages.
+
+Regardless of the mitigation action that will apply to the system, the prerequisite is to measure the overall system behavior under different conditions and with different workloads.
+
+To measure system behavior effectively, you need specialized tools. The LLM community has developed several comprehensive benchmarking tools, which we’ll explore next.
+
+Performance and capacity testing isn’t new to software development. Every mature release pipeline should include it, and a served model from an end-to-end perspective is very similar: it’s an endpoint that accepts requests and generates responses.
+
+Various tools are available for performance testings, allowing you to invoke an endpoint. A runtime can be tested with traditional load generators. This is how LLM performance testing has been done, and it is still sometimes used. Over time, more specialized tools have been developed that can compute more specialized metrics and mix performance testing and model evaluation, combining different scenarios and datasets.
+
+The LLM community is very active and many different tools are available. Some of the most comprehensive are:
+
+GuideLLM
+
+The GuideLLM project was created specifically as a tool to evaluate a model and optimize the deployment of LLMs. It simulates different types of workloads to be equivalent to a real-world scenario. GuideLLM can be used as an interactive tool to gauge performance and use of resources with a specific hardware configuration. The tool covers a large set of rate scenarios that can be configured, from a synchronous scenario, where every request is chained one after the other, to more advanced scenarios with fixed concurrency or even Poisson distribution with the mean at a specified rate. After the benchmark, GuideLLM produces a report with the latency distribution and other useful information. Example 4-2 shows how to call GuideLLM from the command line, resulting in an output shown in Figure 4-2.
+
+Example 4-2. Run a benchmark with GuideLLM
+guidellm benchmark \
+  --target http://127.0.0.1:8000 \   
+  --model mistralai/Mistral-7B-Instruct-v0.2 \
+  --output-path output_file.json \   
+  --rate-type sweep \   
+  --data 'prompt_tokens=256,output_tokens=128' \   
+  --max-seconds 400
+  --warmup-percent 0.2
+
+The target model to test must be deployed before running the test.
+
+The benchmark results are stored in this JSON file.
+
+GuideLLM supports various rate types, with sweep as the default. This versatile option covers multiple scenarios, from sequences of requests to constant rates, providing baseline system numbers without needing a specific workload definition.
+
+To ensure relevant testing, it’s important to specify input and output sizes that match what’s expected in production. The tool defaults to using a local copy of Pride and Prejudice, but it also supports datasets from Hugging Face or custom local datasets.
+
+Figure 4-2. Example output of a GuideLLM run
+MLPerf Inference
+
+The challenge to properly test the performance of machine learning models is not new or limited to LLMs, and indeed there are communities where companies, individual contributors, and academics are collaborating to define tools and publish results. MLCommons is an AI engineering consortium, built on a philosophy of open collaboration to improve AI systems. This organization provides many different tools, one of which is MLPerf Inference, and it has been extended over time to support LLMs. The results are published periodically on the MLCommons website for data center configurations (MLPerf Inference: Datacenter) and Edge/devices (MLPerf Inference: Edge).
+
+Inference Perf
+
+Inference Perf is a GenAI inference performance benchmarking tool proposed and incubated by the Kubernetes WG-Serving group and sponsored by the Kubernetes SIG Scalability. This community effort includes support from different companies. It is specialized for generative AI, and you can specify an arbitrary dataset to simulate a scenario that is similar to a real-world situation. The library can run locally or deploy in a cluster connecting to a previously deployed model with the assumption that it exposes an OpenAI-compatible API.
+
+vLLM benchmark suite
+
+Performance is a critical aspect for inference engines like vLLM, which provides publicly available nightly benchmark jobs with instructions. It is not a proper tool but more like a set of scripts that can be used to measure the performance of a specific model or hardware configuration.
+
+As mentioned before, while other traditional load generators can be used, this would require implementing the LLM-specific metrics like Time to First Token (TTFT) and Inter-Token Latency (ITL). Whatever tool has been selected to measure the performance, the integration in the CI/CD system is usually quite straightforward and is enough to create a task that deploys the model and then performs the test using the tool. The most critical aspect is to use an environment that is equivalent to the production cluster, especially regarding the model and the number of GPUs where the model is deployed.
+
+Integrating the performance test in the release pipeline and storing the result is critical to properly size the cluster and learn the capacity limits. These numbers are critical for capacity planning and for configuring rate limiting or the API gateway.
+
+vLLM Runtime Parameters Tuning
+
+“Understanding LLM Fundamentals” explained how the inference of LLM works, which metrics are important to monitor, and how important the KV cache is to make LLM serving efficient. The model is now compressed and ready to be deployed. Thanks to the performance tests, data related to overall system performance can be used to guide the runtime tuning.
+
+This section is specific to vLLM runtime, but most of the content applies to other LLM runtimes, too.
+
+The development of a vLLM project is very active; new optimizations and new models are added weekly. Improved defaults are implemented in every release, so in most cases it does not need to be tuned, and it just works. The only aspects that vLLM cannot easily infer automatically are the type of workload and the assigned hardware; this is where it is possible to help the engine with the configuration.
+
+Although the default vLLM configuration is usually a valid starting point, you need to perform some sizing analysis to calculate how much VRAM memory the GPU needs (see the following sidebar for detailed calculation guidelines).
+
+HOW TO CALCULATE MODEL MEMORY REQUIREMENTS
+
+Many different factors contribute to the definition of the memory requirements. Most of them are related to the model architecture and the model size, together with the number of concurrent requests.
+
+The main driver of a model’s memory requirements is the number of parameters: a model with 8 billion (8B) parameters requires way less memory compared to very large models that can reach more than 400 billion parameters.
+
+Each parameter in a full-size model typically occupies 2 bytes (16 bits, float16 or bfloat16) of memory. Through compression techniques, this can be reduced to 1 byte (8 bits, FP8 or INT8) per parameter. Multiplying the number of parameters with the size of each produces the baseline memory requirement.
+
+In addition to this baseline, some infrastructure space related to the optimized kernels is loaded to the GPU, usually between 300 MB and 2 GB.
+
+The cost of the activations that represent the intermediate status during the execution should also be considered. It is directly related to the hidden size value and the number of layers. Both of these values can be found in the config.json file for the model (i.e., 40 layers). Activation memory requirements might be limited to 200–300 MB when the sequence length is small (i.e., 512), but this changes dramatically with larger sequences because the cost grows quadratically.
+
+Finally, the output generation requires an output tensor with a cost that is directly related to the vocabulary size, the sequence length, and the batch size.
+
+For a full example with a 8B model that uses parameters of float16 format, 2048 context size, and batch size 1: the baseline memory requirement is about 16 GB (8 billion x 2 bytes). It is usually necessary to consider about 1 GB of additional memory for the infrastructure, activation space of about 900 MB (assuming 4096 as the hidden size), and finally about 400 MB for the output layer.
+
+The total VRAM requirement is about 17.3 GB, which seems reasonable. However, simply increasing the batch size to 10 for processing multiple requests simultaneously almost doubles this requirement, pushing it to over 28 GB of VRAM.
+
+This topic is much larger than this simplified example. New techniques and model architectures are defined frequently, changing the memory implications. For example, there are ongoing evolutions like the Mamba LLM architecture that should dramatically reduce the size requirements for the KV cache.
+
+Online tools can help this calculation, such as TitanML’s Model Memory Calculator. To learn more, including all the formulas that have been applied, we highly recommend the detailed information found in this blogpost from Alexander Smirnov and in the EleutherAI’s blog.
+
+The vLLM runtime greedily utilizes available resources to maximize throughput. Therefore, having more resources directly improves performance. In a perfect scenario, vLLM has enough GPU memory to load the model into VRAM. It also has enough space for activations (the intermediate results of each neural network layer) and for the KV cache. This ensures that the runtime never needs to evict and recompute data that’s still necessary.
+
+When this is not the case, the first symptom is going to be a higher inter-token latency and implicitly less throughput. This is not the only way to detect it because vLLM is usually explicit in the logs when there are similar scenarios. We look at startup logs from vLLM in Example 5-1, but Example 4-3 focuses on memory information.
+
+Example 4-3. vLLM logs information about memory
+...
+INFO [model_runner.py:1097] Loading model weights took 14.9888 GB   
+INFO [worker.py:241] Memory profiling takes 0.67 seconds
+INFO [worker.py:241] the current vLLM instance can use total_gpu_memory (79.14GiB) 
+        x gpu_memory_utilization (0.90) = 71.22GiB
+INFO [worker.py:241] model weights take 14.99GiB; non_torch_memory takes 0.12GiB;  
+        PyTorch activation peak memory takes 1.19GiB; the rest of the memory   
+        reserved for KV Cache is 54.93GiB.   
+...
+WARNING [scheduler.py:1057] Sequence group 0 is preempted by PreemptionMode.SWAP   
+        mode because there is not enough KV cache space. This can affect the
+        end-to-end performance. Increase gpu_memory_utilization or
+        tensor_parallel_size to provide more KV cache memory.
+        total_cumulative_preemption_cnt=1
+
+During vLLM startup, after the model is loaded in the GPU memory, the log includes the size of the weights.
+
+A very useful log entry explains the total GPU memory that vLLM can use.
+
+In addition to the model weights, some additional memory is used by the engine.
+
+Activation takes some memory too: the “peak value” depends on how many nodes of the neural network are activated during an execution. For example, with the Mixture of Experts model architecture, only a subset of the model is activated every time.
+
+The rest of the memory is assigned to the KV cache.
+
+During model execution, this log is produced when the KV cache memory is not enough, so the vLLM has to swap some of the value outside the VRAM.
+
+The log explicitly reports the information when the size allocated to the KV cache is not big enough. A single entry of this log is probably not critical, but when this happens multiple times, it is probably better to consider applying some tuning. Fortunately, the log is very detailed, so the log message includes some suggestions to try to address the problem. The following parameters are important to consider:
+
+gpu-memory-utilization
+
+The parameter’s default value is 0.9, indicating the percentage of available memory vLLM can use. This setting limits the vLLM memory consumption, preventing the Out-Of-Memory (OOM) errors that occurred in earlier versions when vLLM exceeded assigned GPU memory. While 0.9 serves as a safety threshold, the vLLM stability has improved. Consequently, it’s now often safe to increase this value closer to 1.0, allowing access to that extra 10% of memory.
+
+max-model-len
+
+This parameter is crucial and must be configured based on the specific LLM use case or task. The KV cache size directly corresponds to the context size (input prompt plus generated text). While tuning this value directly impacts memory usage, an overly aggressive limit on context size could result in responses lacking enough tokens to address the use case. For instance, RAG patterns often require a substantial context.
+
+max-num-seqs or max-num-batched-tokens
+
+The vLLM engine batches the input to increase GPU usage and increase the throughput. This might have some latency implications, but in highly concurrent production scenarios, the impact is usually very limited. At the same time, the bigger the batch size, the larger the KV cache space, so it is possible to reduce this value to save some memory.
+
+tensor-parallel-size
+
+Unlike previous parameters, increasing tensor parallel size necessitates additional hardware. This process shards the model weights, providing more available memory for the KV cache on each GPU. This requires multiple GPUs, but cross-GPU communication within the same node is generally not a bottleneck. Dedicated high-speed interfaces prevent communication delays. For multinode GPU deployments and advanced network topologies, see the network optimization and topology-aware scheduling sections in Chapter 7.
+
+pipeline-parallel-size
+
+Pipeline parallelism distributes the model layers across multiple GPUs, whereas tensor parallelism splits individual tensors. Both approaches are compatible and increase available KV cache memory, but tensor parallelism is more commonly used for multi-GPU inference on the same node.
+
+data-parallel-size
+
+Similar to pipeline parallelism, this approach splits data into parallel groups, enabling multinode serving across GPUs on different servers. This technique is applicable when a cluster contains more than one GPU-equipped server. While it increases available KV cache memory, it introduces the complexity of a multinode scenario, which requires dedicated connectivity.
+
+cpu-offload-gb
+
+This parameter offloads part of the model to the CPU, allowing deployment of models larger than the available GPU memory. While this seems useful for KV cache management, it significantly impacts throughput. It is strongly discouraged for production due to a massive performance drop and the loss of critical GPU-specific optimizations (e.g., specialized kernels), which are essential for efficient LLM serving.
+
+Using these parameters and knowing the characteristics of the workload is critical to tune the runtime to maximize the performance and match the expected service-level expectation. When this is not enough, it is possible to add more GPUs to the system, but it is also possible to consider additional optimizations thanks to the Kubernetes stack, and in particular the networking part, as described in “LLM-Aware Routing”.
+
+Autoscaling
+
+You’ve optimized the model and tuned the runtime parameters. But production deployments face another challenge: variable workload. Even with a perfectly tuned single instance, you’ll eventually need multiple replicas to handle peak traffic.
+
+In a real-time inference scenario, end user latency is critical. Monitor the Time To First Token (TTFT) and Inter-Token Latency (ITL) metrics to guide routing and scaling. For offline inference, focus on tuning batch size and throughput instead.
+
+Kubernetes has native support for horizontal pod autoscaling that dynamically balances requests across different replicas. However, LLM workloads present specific challenges: request cost varies dramatically by token count, GPU utilization doesn’t correlate with CPU/memory, and startup times can be lengthy. Similar challenges apply to distributed training workloads, which require sophisticated scheduling strategies like gang scheduling and quota management, covered in Chapter 7. The main options for autoscaling are:
+
+Horizontal Pod Autoscaler (HPA)
+
+While the default HPA works out of the box and requires no additional dependencies, it primarily monitors CPU and memory. This makes it less suitable for LLM workloads, which predominantly impact GPUs, thus requiring a more flexible autoscaling solution.
+
+Knative Pod Autoscaler (KPA)
+
+The Knative Serving project offers KPA, a more flexible autoscaler that bases its decisions on the number of requests. Its default “stable” mode uses a time-based window for concurrency calculations to scale. A “panic” mode is also available, employing a much shorter window for faster reactions to workload changes. While KPA is a better fit for LLMs than HPA and integrates natively with KServe (using Knative deployment mode), it was designed for microservices where pod scaling is rapid. Unfortunately, LLMs are complex, GPU-dependent deployments that can take many minutes to load based on model size. This makes dynamic workload scaling less practical without significant tuning (refer to “Optimize vLLM Startup Time”). More importantly, a request-based approach like KPA’s fails to consider that the number of requests doesn’t directly correlate with runtime workload. One request could generate many tokens, while the next generates only a few.
+
+Kubernetes Event-driven Autoscaling (KEDA)
+
+KEDA is a project created to scale event-driven workloads where the request is not an HTTP request but a message from (usually) a queue. The challenge that KEDA creators had to solve is similar to the challenge of LLM scaling: there are many different technologies to implement event-driven architectures, and it is necessary to have a flexible API to configure how to retrieve the information to measure the overall pressure on the system. The solution that has been implemented enables the ability to configure a query based on metrics to guide the scaling. This is because every queue system publishes indicators like the number of messages in the queue to be processed, but every technology has a different approach (i.e., push-based versus poll-based) and different naming conventions. This flexibility works well with vLLM too because the runtime publishes metrics like vllm:num_requests_waiting that measure how many requests are still waiting to be processed, or vllm:time_to_first_token_​sec⁠onds/vllm:time_per_output_token_seconds to keep track of the time to produce every token. KServe natively supports KPA using Knative deployment mode, but it also supports KEDA via the Standard deployment mode. Go back to “KServe” for more information on the different deployment modes of KServe. The KEDA autoscaler is configured in the InferenceService specification with the definition of the query to perform, and it supports fetching directly from PodMetric or from an external source. Both options are equivalent if the configured query is limited to vLLM metrics that are local to the pod; in this scenario fetching metrics directly from the pod reduces the latency in the autoscaler, making it more responsive. The external source option is more flexible because it is possible to collect metrics from different sources (even different replicas of vLLM) and perform more advanced queries that join all information (see Example 4-4).
+
+Example 4-4. Example of KServe and KEDA
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: Meta-Llama-3-8B
+  annotations:
+    serving.kserve.io/deploymentMode: Standard   
+    serving.kserve.io/autoscalerClass: "keda"   
+    sidecar.opentelemetry.io/inject: "Meta-Llama-3-8B"   
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: huggingface
+      args:
+        - --model_name=llama3
+        - --model_id=meta-llama/meta-llama-3-8b
+    minReplicas: 1
+    maxReplicas: 5
+    autoScaling:
+      metrics:
+        - type: PodMetric   
+          podmetric:
+            metric:
+              backend: "opentelemetry"   
+              metricNames:
+                - vllm:num_requests_running
+              query: "vllm:num_requests_running"   
+            target:
+              type: Value
+              value: "4"   
+#        - type: External   
+#          external:
+#            metric:
+#              backend: "prometheus"
+#              serverAddress: "http://prometheus.url:9092"   
+#              query: "vllm:num_requests_running"
+
+Standard is required to use KEDA autoscaler. Knative uses KPA, which is its own autoscaler.
+
+This annotation enables KEDA autoscaler.
+
+One option to collect metrics local to the pod is via the OpenTelemetry sidecar collector.
+
+The PodMetric type configures KEDA to directly query the pod to collect the metrics.
+
+It is necessary to specify the backend because OpenTelemetry and Prometheus have some protocol differences.
+
+The query that KEDA performs to make the decision can be a single value or a more complex query following the PromQL syntax.
+
+In this example, the value 4 means that KEDA will increase the number of replicas (within the defined 1–5 boundaries) if at least four requests are already running in vLLM based on some preliminary benchmark that has a measured latency distribution with a higher number of concurrent requests.
+
+This commented spec is the other configuration where the metrics are queried from an external source.
+
+When the type is External it is necessary to specify the server address where the query should be executed.
+
+The evolution of LLM serving includes the autoscaling topic, and new custom techniques are under development for most complex scenarios, like disaggregated prefill. “Disaggregated Serving” describes disaggregated prefill, which differs significantly from traditional Kubernetes autoscaler definitions. It functions more like a “runtime controller” that observes system status and automatically rebalances replica roles or adjusts replica counts for each role.
+
+Another emerging approach is llm-d’s Workload Variant Autoscaler (WVA), designed specifically for LLM workloads. Instead of just monitoring CPU or request counts, WVA looks at what each pod can handle, considers that different requests require different amounts of work (some generate many tokens, others just a few), and scales based on your actual latency targets. This allows you to run your cluster at higher utilization before adding more pods, while still meeting your performance goals. WVA is part of the llm-d project discussed in “Disaggregated Serving”.
+
+In this section we covered the challenges of configuring a proper autoscaler strategy for LLM deployments. When there are multiple replicas, another challenge requires attention: the tune load balancing strategy. If the load balancer is not LLM-aware, it can produce a suboptimal distribution of the request and impact the stability of system latency. This challenge is described and addressed in “LLM-Aware Routing”.
+
+Optimize vLLM Startup Time
+
+In “Autoscaling” we learned how to introduce a more specialized autoscaler configuration for LLMs, but in a real-world scenario, dynamic scaling is not applicable if the time to start a new replica is many minutes.
+
+The size of LLMs stretches the core design principles behind Kubernetes itself: some of the biggest LLMs can require almost 1 TB of storage just to store the model itself. They are large.
+
+This aspect makes it hard to configure an efficient autoscaling strategy that can detect workload peak and scale the deployment on the fly. There is a physical bottleneck in the time to transfer a similar amount of data.
+
+Performing proper capacity planning, together with performance and scalability tests, is in general a good practice before deploying an application in production. This general advice is even more critical with LLMs.
+
+Optimizing the model’s loading time is a multiphase activity that starts with the packaging of the model. This aspect is described in detail in Chapter 2, but this section focuses on the following steps that are performed, from creating the deployment in Kubernetes to when the runtime is ready to process requests:
+
+1. Runtime image provisioning
+
+Like any other traditional workload in Kubernetes, the vLLM runtime is wrapped in a container that is pulled from a registry to the Kubernetes node. The image size of vLLM is not small, usually few gigabytes (less than 5 GB), and most of the space is usually for the GPU framework, like CUDA in the case of NVIDIA, so it cannot be removed. By default the download of the image from the registry to the node is performed on the fly when the image is required by a pod. The frequency of this activity is specified with the imagePullPolicy property, and it is important to avoid the Always value to keep the image from being downloaded for every replica or new deployment. In a production configuration it’s usually configured with IfNotPresent so that the download happens only the first time, or even with Never, making sure that the image is prepulled to the node. When the image is already available on the node, the time to load it is very limited, so to optimize this step, the only aspect to pay attention to is to avoid Always as imagePullPolicy. Additionally, for production deployments it’s recommended to use specific version tags (e.g., vllm/vllm-openai:v0.12.0) rather than mutable tags like latest, or even better, pin the image by its digest hash (e.g., vllm/vllm-openai@sha256:abc123...) to ensure you always deploy the exact same image version across all environments.
+
+2. Model retrieval and mounting
+
+The method chosen for storing and retrieving a model significantly impacts loading performance; a poor design choice can become the primary bottleneck. Common options include downloading on the fly from Hugging Face, storing on S3-compatible storage, copying to a Persistent Volume Claim (PVC) and mounting as a volume, or packaging as an Open Container Initiative (OCI) image. Of these, direct download from Hugging Face and the S3 option are inefficient, often taking many minutes due to data transfer and local copying; conversely, PVC and OCI approaches prevent this local copying by mounting the model directly as a volume or sidecar container. If specific requirements necessitate using Hugging Face or S3, it is highly recommended to leverage the KServe local model cache option. This feature configures a local cache using the model’s storageUri as a key, ideally combined with fast storage hardware like solid state drives (SSDs) via the Non-Volatile Memory Express (NVMe) protocol. Thanks to the KServe local model cache, Hugging Face and S3 performance effectively become equivalent to that of using a PVC. Training workloads face similar storage challenges for managing large datasets and model checkpoints, with additional considerations for distributed filesystems and checkpoint strategies, which are covered in Chapter 7.
+
+3. Starting the runtime
+
+The startup time of vLLM usually takes a second or less. It produces useful information in the logs, as explained in Example 5-1, but from a loading time perspective it is not critical.
+
+4. Loading the model
+
+Regardless of the option selected to retrieve and mount the model, when the vLLM runtime starts, the model must be available for loading, and most of the time is spent loading the model weights by copying them to GPU memory. The work to reduce the time to ready a new runtime replica to serve the model is mainly focused on this particular phase. This work has a physical upper bound that is the I/O bandwidth to the GPU memory, so it is not possible to get faster than that, but the loading time of a model without optimization is pretty far from the physical limit. At the infrastructure level, technologies like NVIDIA GPUDirect Storage can significantly speed up data transfer by enabling direct paths between NVMe storage and GPU memory, bypassing the CPU. There are three different extensions in vLLM with projects that are specialized for the loading time problem: CoreWeave Tensorizer, Run:ai Model Streamer, and fastsafetensor.
+
+OPTIMIZE MODEL LOADING
+
+Run:ai Model Streamer is a fast, highly concurrent implementation of the loading procedure that loads the tensors; it supports different file formats, including safetensor, and different storage options. CoreWeaver’s Tensorizer and fastsafetensor both require the model to be prepared with a specific serialization format that is then used to load the model faster. In general, the configuration and the usage in vLLM is similar for both Tensorizer and Model Streamer (see Example 4-5), while fastsafetensor requires setting some additional environment variables. Tensorizer and Model Streamer have larger adoption, compared to fastsafetensor, which is designed specifically to optimize loading from NVMe devices. Given that Model Streamer doesn’t require repackaging the model, it is the easiest option to experiment with. However, given that this chapter is about production optimization, it makes sense to consider the other two options too and pick the one that better fits your specific setup.
+
+Example 4-5. vLLM usage of Run:ai Model Streamer
+vllm serve \
+ --port=8080 \
+ --model=/mnt/models \
+ --served-model-name=meta-llama/Meta-Llama-3-8B \
+ --load-format runai_streamer \   
+ --model-loader-extra-config '{"concurrency":16}'   
+
+The value runai_streamer as the value for the load-format parameter doesn’t require a different serialized format, but it enables the Model Streamer code. Using tensorizer as a value enables the Tensorizer loader, but this also requires having the model saved with the Tensorizer serializer.
+
+This configuration enables 16 concurrent threads that will load the model in parallel. The other available options can be found in the Model Streamer environment variables documentation.
+
+5. Warming up the inference engine
+
+Once weights are resident in GPU memory, the runtime pre-allocates the KV cache memory pool and performs some profiling operations. GPU kernels are specialized functions that execute mathematical operations on the GPU; launching thousands of them individually creates a CPU bottleneck during inference. To eliminate this overhead, the runtime captures kernel launches into reusable sequences known as CUDA (NVIDIA) or HIP (AMD) graphs. This “warmup” phase is essential for high-throughput serving but adds to the total time-to-ready. Recent efforts focus on caching graph artifacts and leveraging GPU snapshots to bypass repetitive initialization. See the vLLM documentation on CUDA Graphs for details.
+
+6. Exposing the model
+
+When the model has been loaded, vLLM exposes the OpenAI-compatible API and many other endpoints, and it is ready to serve requests. The list of APIs includes a /health endpoint that can be used to configure the readiness probe as recommended by Kubernetes best practices.
+
+These are the main steps performed by vLLM to start the runtime, load the model, and expose it. The two phases that take most of the time are downloading the model and loading it in the GPU. We explained how to avoid the download time with proper configuration and how to improve the model loading time using one of the vLLM extensions. The other advice mentioned is to use fast storage options like an NVMe device.
+
+Applying all of these recommendations can reduce the time to scale up vLLM from many minutes to tens of seconds, depending on the size of the model.
+
+LLM-Aware Routing
+
+The previous section showed how to scale to multiple replicas. Now we face a new challenge: how to effectively distribute requests across those replicas. Load balancing requests across different replicas is a challenge that starts to impact the cluster as soon as a single replica is not enough and multiple replicas of the model are provisioned. The default Kubernetes strategy to dispatch the requests across multiple replicas is round robin. The requests are uniformly distributed and defined, considering the workload of microservices, where monitoring CPU and memory is enough to monitor the current workload of the single replica and decide when to scale.
+
+In reality, the round robin approach has already shown limitations when Kubernetes is deployed on a cloud environment with multizone configuration. Kubernetes introduced topology aware routing to heuristically manage the load and keep traffic within the zone it originated from.
+
+With the serving of LLMs, the boundaries of Kubernetes are stretched more than in the past, and this requires exploring a different approach for optimizing routing and load balancing a request to a replica. Multiple factors should be considered to perform specialized routing of the requests:
+
+Each request is different
+
+The previous chapters already highlighted this aspect. There’s no correlation between the input prompt size and the number of tokens the model produces, and generation can continue for many seconds. The impact of a request on a replica is not predictable, thus the routing strategy must consider the actual work the replica is performing and in particular how many requests are still waiting to be processed. A specific metric, vllm:num_requests_waiting, produced by vLLM, that keeps track of this information.
+
+Batching
+
+vLLM creates a batch of requests of a certain, configurable size to use all the available resources and produce more tokens. This is critical in real-time scenarios to handle more requests in parallel. However, it is not always possible to fill the entire batch with requests, and the router can mix offline inference requests with real-time ones to fill a batch.
+
+Prefill and decode workload
+
+We already explained the different impacts on the hardware that the prefill and decode phases have. In particular, the prefill phase is directly related to the size of the prompt, so it is possible to design dedicated instances of vLLM to perform the prefill of large prompts. This is called disaggregated prefill and is covered in “Disaggregated Serving”.
+
+KV cache reuse
+
+Previous chapters mentioned the KV cache multiple times as a critical aspect for efficient token generation. However, this impact extends beyond single requests. The model has no memory. Every request appears as completely new. For example, in a chatbot, the whole conversation is provided for every new message, requiring the system to process (prefill) all previous messages again. The same pattern applies to AI agents when a tool is invoked and the result is sent back to the model together with the previous prompt. A router that is aware of the status of the KV cache of each replica can route the request exploiting this aspect; this is called prefix-aware routing.
+
+Different service-level requirements
+
+Real-time requests have higher priority than batch requests, but the prioritization of the requests from different users might be more complex. For example, the scheduling logic can drop a request that is not critical when the capacity (number of requests waiting and KV cache size) is less than a certain threshold.
+
+LoRA adapters
+
+There is another use case where the traditional Kubernetes routing pattern doesn’t apply well: the efficient serving of a fine-tuned model. The customization of a model is covered in “Tuning a Model”, but in general from a serving perspective, when a model is fine-tuned, the training job produces a new specialized version that is deployed as a new, independent model. But when a particular technique, Low-Rank Adaptation (LoRA) (see “Low-Rank Adaptation”), is used, the fine-tuned model is saved as a thin layer, called the LoRA adapter, to be composed with the base model. This enables deployment in the same runtime instance as the adapter, saving hardware resources but breaking the mapping of one model per endpoint.
+
+There is a lot of interest in optimizing the inference and reducing its cost, and different initiatives aim to solve or at least improve both of the two scenarios described. This is an evolving field. The goal that the initiatives have in common is to obtain a gateway component that is aware of the LLM traffic and can optimize it. Figure 4-3 provides a high-level representation of this component.
+
+Figure 4-3. LLM-aware Gateway API
+
+The LoRA adapter scenario is the simplest from a routing perspective because it is enough to be aware of the mapping between the runtime instance and the LoRA adapter. The main challenge is that there is no one-to-one mapping between the endpoint and the model, and the routing logic of the cluster should support this service discovery logic to forward the request for a LoRA fine-tuned model to where it is available.
+
+The vLLM runtime has native support to serve the LoRA adapter together with the base model, making both models available under the same endpoint and allowing the user to specify which model to execute directly in the request. See Example 4-6 to learn how to serve LoRA models with vLLM.
+
+Example 4-6. Serving LoRA adapters with vLLM
+vllm serve meta-llama/Meta-Llama-3-8B \   
+    --enable-lora \   
+    --lora-modules my-lora-model=$HOME/.cache/huggingface/   
+
+...
+curl localhost:8080/v1/models | jq
+{
+    "object": "list",
+    "data": [
+        {
+            "id": "meta-llama/Meta-Llama-3-8B",   
+            "object": "model",
+            ...
+        },
+        {
+            "id": "my-lora-model",   
+            "object": "model",
+            ...
+        }
+    ]
+}
+
+...
+curl localhost:8000/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "my-lora-model",   
+        "prompt": "LoRA is a",
+        "max_tokens": 10,
+        "temperature": 0
+    }' | jq
+
+The base model is served with vLLM.
+
+LoRA support should be enabled with a proper parameter.
+
+This parameter lists all the LoRA adapters to load; my-lora-model is the name of the model, followed by the local path, thus inside the container where the LoRA adapter is saved. Because this is a list, it’s possible to load multiple LoRA adapters, and the folder where the model is can be a mounted volume from outside.
+
+The base model is included in the list of available models.
+
+The LoRA model appears as an additional available model.
+
+It is possible to specify the name of the LoRA model directly during the execution in the same way as for base models, so there is no difference from an end user perspective.
+
+With vLLM configured to serve multiple LoRA adapters, the next step is to make Kubernetes aware of it so that this information can be used when routing a request. There are projects in Kubernetes to manage the network, and the Kubernetes Gateway API should become the standard way to declare and configure all kinds of gateways.
+
+One of the most active communities is the Kubernetes Special Interest Group (SIG) dedicated to model serving, WG-Serving, that incubated the Gateway API Inference Extension (GIE) project designed to optimize the routing and efficiency of LLM serving.
+
+The project is also sometimes referred to as the Inference Gateway. It extends the Kubernetes Gateway API to bring awareness of the inference workload (for background on the Gateway API, see the following sidebar). Before exploring the technical details of GIE, it’s important to first understand what distinguishes AI gateways from traditional API gateways and the unique capabilities they provide for LLM workloads.
+
+GATEWAY API
+
+The Gateway API project is a very large, complex project focused on L4 and L7 routing in Kubernetes. The final goal of this official Kubernetes project is defining the next-generation API and implementing Kubernetes ingress, load balancing, and service mesh.
+
+It is role oriented and defines a different set of APIs to represent all the aspects of network configuration, from the infrastructure provider, to expose a single application.
+
+The Gateway API describes how traffic can be translated to services within the cluster, but it is just the intent, not the actual endpoint or full specification. The creation of a route is protocol-specific like HTTPRoute, attached to a gateway, and defines the rule to forward a request to a service.
+
+Many other objects and concepts are part of the full specification but are not critical to explain the Inference Extension and thus are not covered here. For more detailed information, see the API Overview page of the Gateway API website.
+
+From API Gateway to AI Gateway
+
+Traditional API gateways were designed for stateless microservices where requests are independent and resource consumption is roughly uniform across endpoints. AI gateway architectures extend this foundation with capabilities specific to LLM workloads, addressing fundamentally different operational challenges.
+
+AI gateways enable Model as a Service (MaaS) architectures, where LLM inference capabilities are exposed as managed APIs to multiple users or teams. Similar to how software as a service (SaaS) provides software capabilities over the internet, MaaS delivers model inference as a service by configuring resource quotas, access controls, and usage tracking to ensure fair resource allocation across tenants.
+
+Token-based rate limiting and user management
+
+User tracking becomes critical for enabling fair access and quota management when serving LLMs in multitenant environments. Unlike traditional APIs where the request is the unit of measurement, LLM serving uses tokens as the fundamental unit of computation. A single request might generate 10 tokens or 10,000 tokens, consuming vastly different amounts of GPU resources and time. This makes traditional request-based rate limiting ineffective for LLM workloads.
+
+The Envoy AI Gateway provides token-based rate limiting capabilities that track and limit token consumption per user or API key, enabling fair resource allocation across multiple tenants accessing the same model deployment. Similarly, Kuadrant offers token rate limiting integrated with Kubernetes-native policy management, allowing platform administrators to define quotas based on tokens generated rather than requests made.
+
+Evolution of AI gateway capabilities
+
+The AI gateway ecosystem is rapidly evolving beyond basic routing and rate limiting to include more sophisticated capabilities:
+
+Semantic routing
+
+Semantic router projects enable routing based on the semantic content of user requests, directing different types of queries to specialized models. This routes code generation requests to code-specialized models while sending general conversation to general-purpose LLMs, optimizing both cost and quality.
+
+Hybrid routing
+
+Advanced AI gateways support hybrid approaches where requests can be dynamically routed to local on-premises models or remote cloud-hosted models based on current system workload, model availability, and SLA requirements. For example, during peak load, overflow traffic can be routed to cloud-based inference endpoints while keeping latency-sensitive requests on local infrastructure.
+
+Model composition
+
+Emerging AI gateway patterns enable chaining multiple models together, where the output of one model becomes the input to another, implementing complex workflows like retrieval-augmented generation (RAG) where a retrieval model first identifies relevant documents before an LLM generates responses.
+
+These capabilities transform AI gateways from simple traffic routers into intelligent orchestration layers that optimize cost, latency, and quality across heterogeneous model deployments.
+
+Gateway API Inference Extension
+
+The Gateway API Inference Extension project extends the Kubernetes Gateway API with capabilities optimized for AI inference workloads, including model-aware routing (routing based on model names rather than just URL paths), serving priorities, and incremental model rollouts through traffic splitting.
+
+The core resource is InferencePool (v1 stable), which represents a group of pods dedicated to serving AI models that share the same compute configuration, accelerator type, and base model. Platform administrators can configure InferencePools to enable intelligent routing based on metrics like KV cache utilization, queue length, or model-specific characteristics. InferenceObjective (alpha) defines serving objectives and priorities for routing decisions, allowing differentiated service levels for different workloads. Note that InferenceObjective replaced the earlier InferenceModel resource when the API evolved.
+
+One common use case is LoRA-aware routing, where an InferencePool manages pods serving a base model with multiple LoRA adapters, and the routing logic intelligently distributes requests to pods based on which adapters are loaded. See Example 4-7 for the usage of these APIs.
+
+Example 4-7. Example of Gateway API Inference Extension usage
+apiVersion: inference.networking.k8s.io/v1   
+kind: InferencePool
+metadata:
+  name: vllm-llama3-8b-instruct
+spec:
+  targetPorts:   
+    - number: 8000
+  selector:   
+    app: vllm-llama3-8b-instruct
+  endpointPickerRef:   
+    name: vllm-llama3-8b-epp
+    port: 9002
+    failureMode: FailClose
+---
+apiVersion: inference.networking.x-k8s.io/v1alpha2   
+kind: InferenceObjective
+metadata:
+  name: high-priority-inference
+spec:
+  priority: 1   
+  poolRef:
+    group: inference.networking.k8s.io
+    name: vllm-llama3-8b-instruct
+---
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: standard-inference
+spec:
+  priority: 2
+  poolRef:
+    group: inference.networking.k8s.io
+    name: vllm-llama3-8b-instruct
+---
+apiVersion: v1
+kind: Service   
+metadata:
+  name: vllm-llama3-8b-epp
+spec:
+  selector:
+    app: vllm-llama3-8b-epp
+  ports:
+    - port: 9002
+      targetPort: 9002
+
+The InferencePool resource uses the stable v1 API with the inference.networking.k8s.io group.
+
+The targetPorts field is an array that defines the ports exposed by the model server pods, supporting up to eight ports.
+
+The selector field specifies which pods belong to this pool using label matching. The pods running vLLM are configured to serve both base and LoRA models using the --enable-lora flag (see Example 4-6).
+
+The endpointPickerRef references the Endpoint Picker service that implements intelligent routing logic using custom algorithms to select the best pod for each request.
+
+InferenceObjective defines serving objectives and priorities for routing decisions. This resource is currently in alpha (v1alpha2).
+
+The priority field specifies the serving priority, where higher values indicate more critical requests that should be handled preferentially.
+
+The Endpoint Picker service that implements the routing logic using the Envoy External Processing protocol.
+
+The concept of an InferencePool is flexible and represents a set of inference-focused pods. The routing logic can use information from different sources (like vLLM metrics) to decide which pod should process the request or even refuse requests based on priorities and current workload. LoRA-aware routing is one of the key use cases, allowing intelligent distribution of requests to pods serving specific model adapters.
+
+Gateway API Inference Extension has been designed with the idea of extending the routing decision logic to be increasingly more specific for the LLM workload. Envoy proxy is the core component that enables this flexibility. It is a highly scalable HTTP proxy implementation used for many different use cases thanks to the ability to plug custom processing logic via External Processing. The External Processing (ext_proc) filter defines a gRPC protocol that can be implemented by external services to be registered as a processing step that can read and modify both the HTTP headers and the request body.
+
+The Gateway API Inference Extension project adopts the External Processing concept to define the Endpoint Picker protocol (EPP). An Endpoint Picker, as the name suggests, can pick an endpoint from the InferencePool, and each implementation of this component must support the Envoy External Processing protocol so that it can be invoked by the Envoy proxy during processing.
+
+One of the most interesting Endpoint Picker implementations is the inference-scheduler that is part of the llm-d project (see “Disaggregated Serving” for more details). This specific Endpoint Picker implementation supports different filters and scoring logic; for example, it is possible to configure metrics scraping from the different vLLM instances and use the vllm:num_requests_waiting metric to pick the replica with the lowest number of requests waiting.
+
+From a Kubernetes perspective, each Endpoint Picker is a different deployment that is usually deployed in the same namespace where the model is deployed, but it is not required. The only requirement is that it has access to the container where vLLM is running to collect the metrics and that the instance of the gateway (Envoy proxy) can reach the Endpoint Picker. The communication can be secured via mTLS or in general via certificate.
+
+In “Disaggregated Serving”, the Inference Gateway will be used together with other components in a more complicated setup to distribute the inference workload, but the usage of a smarter routing logic has already had a big impact on scalability.
+
+Gateway API Inference Extension is not the only option, and neither is it the only open source project focusing on the creation of an AI gateway. The Envoy AI Gateway is another project using Envoy proxy to build AI gateway capabilities, reusing the Gateway API Inference Extension and extending it with other user-facing features, like token-based rate limiting and security. Another example is the vLLM Production Stack project that has introduced an external and sharable KV cache storage to extend the benefit of reusing the KV cache content across different instances.
+
+Finally, there is the already mentioned llm-d project that extends the Gateway API Inference Extension to integrate it more and more with vLLM runtime, including distributed and shared KV cache and disaggregated prefill. It is one of the most advanced solutions currently available for large-scale LLM deployments, and it will be used as a reference in “Disaggregated Serving”.
+
+While the Gateway API Inference Extension provides powerful capabilities, the configuration of InferencePools, InferenceModels, and Endpoint Pickers can become complex for production deployments. KServe’s LLMInferenceService API simplifies this by providing a higher-level abstraction that automatically manages the underlying gateway components. The LLMInferenceServiceConfig acts as a preset template that encapsulates common configuration patterns for intelligent routing, KV cache-aware scheduling, and disaggregated serving, hiding the low-level complexity while still allowing customization when needed (see Example 1-12 for configuration examples).
+
+Disaggregated Serving
+
+In addition to LLM-aware routing, many other optimizations can be applied to scale the LLM service in production. The more stringent the latency and scalability requirements, the more complex the configuration becomes.
+
+The disaggregated serving approach distributes LLM serving by integrating an LLM-aware router with distributed KV cache and disaggregated prefill optimizations. Before going into more detail, it is important to highlight that similar configuration makes the deployment more similar to an appliance instead of a traditional Kubernetes deployment, and it is designed for very large-scale deployments where few models are served in a single cluster.
+
+Multiple projects have been created with the goal of implementing disaggregated serving. The most famous are NVIDIA Dynamo and llm-d, and the main difference is the focus: NVIDIA Dynamo is specialized and deeply integrated with NVIDIA hardware, while llm-d aims to support different hardware and integrate existing open source projects, thus leveraging the ecosystem.
+
+Everything described in this chapter up to this section is applicable to a traditional Kubernetes cluster that has at least one node with GPUs, but this is not enough to support disaggregated serving. As soon as the runtime is distributed, and in particular the KV cache is shared across different deployments, the network bandwidth available to share the KV cache blocks becomes critical and a dedicated network configuration is required to obtain the benefit of the distribution.
+
+The traditional pod network interface is usually backed by an Ethernet connection that has up to 10–20 Gbps, while the bandwidth requirement is about one order of magnitude higher—about 500–600 Gbps!
+
+NVIDIA developed a specialized network stack to match a similar requirement. It is possible to connect multiple GPUs using NVLink and NVSwitch to break the limit of Tbps in some configurations.
+
+Other options that are not specific to NVIDIA hardware are based on Remote Direct Memory Access (RDMA) and RDMA over Converged Ethernet (RoCE) to reach up to 800 Gbps. InfiniBand is a famous RDMA implementation that was created many years before generative AI to support high-performance computing (HPC), and now similar configurations are not limited to supercomputers but might become more widely adopted with the evolution of generative AI workloads.
+
+After the introduction of the additional network requirements to support the distribution of the serving runtime, we will now introduce two optimizations that can be implemented with a similar cluster available: distributed KV cache and disaggregated prefill:
+
+Distributed KV cache
+
+The KV cache has been mentioned many times already because it is a very critical aspect to make the LLM execution more efficient. The base intuition behind the distributed KV cache is simple: it would be great if we could store KV blocks in some external cache and reuse them when necessary.
+
+This approach has two main benefits: the KV cache instance size is no longer limited by the available memory, and it is possible to share blocks across different replicas. It is easy to imagine that this optimization has a positive impact only if the time to transfer KV cache data from one instance to another is very fast, in the range of milliseconds. The idea is quite natural, but the implementation is very complex, and two new projects have been created specifically with this focus: LMCache and NVIDIA Inference Xfer Library (NIXL). The claim from LMCache is “Redis for LLMs,” and it implements an API to cache KV blocks. The main benefit applies, as expected, to scenarios where the input prompt is very long (as usually happens with a RAG use case), so that the prefill phase doesn’t need to be performed for every new request.
+
+On the other hand, the NIXL project is a small library with a more specific goal: accelerate point-to-point communication for AI runtimes, providing an abstraction over the different types of memory (like GPU and CPU) and storage (from file to remote object store).
+
+These two projects can be used together. The llm-d project leverages the benefits of each project. NIXL in particular is very flexible and might be used even without disaggregated serving, enabling, for example, the possibility of leveraging CPU memory as an extension of GPU memory to have a larger KV cache. The distribution of the KV cache has implications for the LLM-aware router component too, because even if the KV cache is distributed to and accessible by all the replicas, it is way more efficient to forward the request to a replica where the necessary KV cache blocks are ready to avoid a cache miss and a block transfer.
+
+Disaggregated prefill
+
+Prefill is the first phase of request processing. During this phase the input prompt is processed and the first token is produced. After prefill, the decode phase continues to produce token by token until the end of the stream. The first phase is compute-bound and impacts the Time to First Token metric, while the second phase is memory-bound and impacts the Inter-Token Latency metric (see “Understanding LLM Fundamentals” for more details). Given the different nature of the workload, disaggregated prefill splits the prefill phase and the decode phase into two different pools of instances so that it is possible to scale and tune the two phases independently; for example, if the workload mainly includes long input prompts, the prefill phase will need more replicas to process them. The main challenge of enabling this approach is that the prefill phase is in charge of initializing the KV cache so it must be transferred from the prefill instance to the decode instance to continue the generation. Fortunately, the distribution of the KV cache described earlier can be applied to this use case too. From an implementation perspective, disaggregated prefill requires the distributed KV cache and a routing component.
+
+Now that all the ingredients to build a disaggregated serving stack have been introduced, it is possible to describe the end-to-end architecture of a similar solution. The design described in Figure 4-4 represents the entire stack, from the Gateway API to vLLM, including all llm-d components and KServe LLMInferenceService to manage the deployment lifecycle.
+
+Figure 4-4. llm-d disaggregated serving architecture
+
+The development and optimization of the serving stack is far from completed. New models and new model architectures are defined almost every week, and the same happens on the runtime development side. Solutions like disaggregated serving introduce higher coupling of the different components, necessary when you have very large-scale deployments. The adoption of a similar solution increases the complexity to manage from a platform perspective, but there is ongoing work to simplify the deployment and the lifecycle management in the llm-d community and in other projects like KServe. Disaggregated serving is based on the contribution of many different communities; for example, the disaggregated prefill topology was introduced by the Mooncake project and then adopted by NVIDIA Dynamo and llm-d. This is the power of open source development!
+
+Lessons Learned
+
+In this chapter we explored the continuous optimization required for production LLM inference across model selection, runtime configuration, and infrastructure topology.
+
+Model selection cannot rely solely on parameter count or general benchmarks. Task-specific evaluation using domain-relevant datasets reveals accuracy differences that general leaderboards obscure. Compression techniques like quantization and pruning reduce memory footprint and improve throughput, but quality degradation varies by model architecture. Benchmark your specific workload before committing to a compression strategy.
+
+Autoscaling LLM workloads differs fundamentally from traditional application scaling. Token-based metrics (TTFT, TPOT) and KV cache utilization provide better scaling signals than request rate or CPU usage. Scale-to-zero remains impractical for most LLM deployments due to model loading times measured in minutes, not seconds. Pre-warming replicas and setting conservative minimum replica counts prevent the cold-start latency spikes that destroy user experience.
+
+vLLM startup optimization directly impacts deployment velocity and recovery time. Model caching on persistent volumes, optimized container images, and strategic use of init containers reduce initialization from minutes to seconds. These optimizations compound during rollouts, autoscaling events, and failure recovery.
+
+Request routing strategies affect both latency and cost. Cache-aware routing that directs similar requests to the same replica maximizes KV cache hit rates, reducing redundant computation. Disaggregated serving architectures separate prefill and decode phases across specialized hardware, enabling independent scaling of compute-bound and memory-bound workloads.
+
+Advanced topologies like disaggregated serving introduce operational complexity that requires specialized Kubernetes resources like LeaderWorkerSet, topology-aware scheduling, and high-bandwidth networking. These patterns mirror distributed training workloads more than traditional stateless services, demanding infrastructure planning that considers GPU interconnect topology and network bandwidth alongside compute capacity.
+
+With all these optimizations in place, the next question becomes: how do you know they are working? The next chapter explores observability for LLM workloads, covering the metrics, logs, and traces that reveal whether your production setup performs as expected.
+
+table of contents
+close x
+Generative AI on Kubernetes
+
+Roland Huß, Daniele Zonca
+
+Published by O'Reilly Media, Inc.
+queue
+0% complete
+Content Progress 0% completed
+Approx. 11 hours left
+Collapse
+Contents
+Highlights
+Preface
+Introduction
+I. Inference
+1. Deploying Models
+Practice Quiz
+
+2. Model Data
+Practice Quiz
+
+II. Production Readiness
+3. Kubernetes And GPUs
+Practice Quiz
+
+4. Running In Production
+Model and Runtime Tuning
+Show More Items
+Autoscaling
+Optimize vLLM Startup Time
+LLM-Aware Routing
+Show More Items
+Disaggregated Serving
+Lessons Learned
+Practice Quiz
+
+5. Model Observability
+Practice Quiz
+
+III. Tuning
+6. Model Customization
+Practice Quiz
+
+7. Job Scheduling Optimization
+Practice Quiz
+
+IV. AI-Driven Apps
+8. AI-Driven Applications
+Practice Quiz
+
+9. Running Agentic Applications In Production
+Practice Quiz
+
+Afterword
+Final Quiz
+
+Index
+About The Authors
+search
+settings
+4. Running in Production
+queue
+Generative AI on Kubernetes

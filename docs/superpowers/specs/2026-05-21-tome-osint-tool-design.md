@@ -53,7 +53,7 @@ tome scan <ip> [--active]        # fingerprint live target (passive default, act
 
 ### Passive vs. active split
 
-Default mode sends zero packets to any target. All intelligence comes from the embedded corpus and public passive sources (Shodan API, DNS, WHOIS).
+Default mode sends zero packets to any target. All intelligence comes from the embedded corpus and public passive sources (Shodan API, DNS, WHOIS). `tome scan <ip>` in passive mode queries Shodan for existing banner data on that IP — it does not connect to the target.
 
 `--active` enables live service probing. When used, TOME prints:
 
@@ -262,7 +262,7 @@ tome/
 │   ├── vllm.json
 │   ├── chromadb.json
 │   ├── weaviate.json
-│   └── ... (16 total at v0.1)
+│   └── ... (17 total at v0.1)
 ├── internal/
 │   ├── corpus/        # embed FS loading
 │   ├── fingerprint/   # passive + active probe logic

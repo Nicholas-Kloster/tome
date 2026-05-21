@@ -1,0 +1,80 @@
+<h2>O'Reilly Research Findings — 8 chapters, 4 books</h2>
+<p class="subtitle">What the books gave us and what they didn't cover</p>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+
+  <div class="mockup">
+    <div class="mockup-header" style="color:#3fb950">SOLID COVERAGE — 8 platforms profiled</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:10px;line-height:1.7">
+      <div style="display:grid;grid-template-columns:auto auto auto;gap:4px 12px">
+        <div style="color:#bc8cff">Platform</div><div style="color:#bc8cff">Port</div><div style="color:#bc8cff">Auth default</div>
+        <div style="color:#3fb950">Ollama</div><div>11434</div><div style="color:#f85149">none</div>
+        <div style="color:#3fb950">vLLM</div><div>8080</div><div style="color:#f85149">none</div>
+        <div style="color:#3fb950">TGI</div><div>8080+3000</div><div style="color:#f85149">none</div>
+        <div style="color:#3fb950">llama.cpp</div><div>8000</div><div style="color:#f85149">none</div>
+        <div style="color:#3fb950">SGLang</div><div>8000</div><div style="color:#f85149">none</div>
+        <div style="color:#3fb950">Ray Serve</div><div>8000+8265</div><div style="color:#f85149">none</div>
+        <div style="color:#3fb950">NVIDIA NIM</div><div>8000</div><div style="color:#f85149">none</div>
+        <div style="color:#3fb950">KServe</div><div>inherits</div><div style="color:#f85149">none</div>
+      </div>
+      <div style="margin-top:8px;color:#8b949e">Every open-source serving framework: no auth by default.</div>
+      <div style="color:#8b949e">Confirms the auth-on-default thesis at the book level.</div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header" style="color:#f85149">ZERO O'Reilly COVERAGE — need other sources</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:10px;line-height:1.6">
+      <div style="color:#f0883e">Serving proxies</div>
+      <div style="color:#e6edf3;padding-left:8px">LiteLLM · OpenLLM · LocalAI</div>
+      <div style="color:#f0883e;margin-top:6px">UI layer</div>
+      <div style="color:#e6edf3;padding-left:8px">Open WebUI · Jupyter · JupyterHub</div>
+      <div style="color:#f0883e;margin-top:6px">Vector DBs</div>
+      <div style="color:#e6edf3;padding-left:8px">ChromaDB · Weaviate · Qdrant · Milvus</div>
+      <div style="color:#f0883e;margin-top:6px">Observability</div>
+      <div style="color:#e6edf3;padding-left:8px">Langfuse · LangSmith · W&amp;B · MLflow</div>
+      <div style="color:#f0883e;margin-top:6px">Orchestration</div>
+      <div style="color:#e6edf3;padding-left:8px">n8n · LangChain · LlamaIndex</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="mockup" style="margin-bottom:16px">
+  <div class="mockup-header">Key finding: OpenAI-compat API is universal</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:10px;line-height:1.6">
+    <div style="color:#58a6ff">/v1/chat/completions</div> and <span style="color:#58a6ff">/v1/completions</span> appear in <strong>every</strong> framework (vLLM, TGI, llama.cpp, SGLang, NIM).
+    <div style="margin-top:6px;color:#3fb950">→ One probe path detects them all. This is TOME's single most valuable dork signal.</div>
+    <div style="margin-top:6px;color:#8b949e">Ray Serve dashboard on port 8265 is separately exposed with no auth — separate OSINT surface.</div>
+    <div style="color:#8b949e">TGI uniquely exposes /generate_stream on 8080 AND /v1/chat/completions on 3000 simultaneously.</div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>The gap: 17 platforms with no O'Reilly book coverage</h3>
+  <p class="subtitle">These are the platforms NuClide actually finds in surveys (Open WebUI, Langfuse, ChromaDB, Weaviate, n8n). O'Reilly doesn't cover them. Options:</p>
+
+  <div class="options">
+    <div class="option" data-choice="more-books" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content">
+        <h3>Search O'Reilly for dedicated books on the missing platforms</h3>
+        <p>ChromaDB, Weaviate, LangChain, n8n may have dedicated books or deep chapters. Search and extract those too before designing the corpus schema.</p>
+      </div>
+    </div>
+    <div class="option" data-choice="build-now" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content">
+        <h3>Build TOME now with 8 solid profiles — add gaps via PRs</h3>
+        <p>8 profiles is enough to ship v0.1. The missing platforms get filled in from empirical survey data (NuClide's own findings) and community contributions. O'Reilly is one source, not the only one.</p>
+      </div>
+    </div>
+    <div class="option" data-choice="hybrid" onclick="toggleSelect(this)">
+      <div class="letter">C</div>
+      <div class="content">
+        <h3>One more search round, then build</h3>
+        <p>Run targeted searches for the 5 highest-priority missing platforms (Open WebUI, ChromaDB, LiteLLM, Langfuse, n8n). Extract what exists. Then build with everything we have.</p>
+      </div>
+    </div>
+  </div>
+</div>

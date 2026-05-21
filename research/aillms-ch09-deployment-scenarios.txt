@@ -1,0 +1,831 @@
+9
+Adapting the OWASP Top 10 to Diverse Deployment Scenarios
+
+In the previous chapter, we explored the OWASP Top 10 risks specific to LLM applications and attributed frameworks for assessing, prioritizing, and evaluating these risks. In this chapter, we’ll focus on how to adapt and apply the OWASP Top 10 framework to a diverse range of LLM use cases and deployment scenarios. We will guide you with respect to tailoring risk assessment and mitigation strategies to different LLM applications’ specific technical and operational contexts, such as chatbots, content generators, and decision support systems.
+
+In this chapter, we’ll be covering the following topics:
+
+Identifying risk profiles for different LLM application types
+Adapting the Top 10 to chatbots and conversational AI systems
+Applying the Top 10 to content generation and creative AI applications
+Tailoring the Top 10 for decision support and recommendation systems
+Scaling the Top 10 for enterprise-wide LLM deployment and governance
+Identifying risk profiles for different LLM application types
+
+Outside of software-as-a-service (SaaS) deployment strategies, when considering deployment options for LLM applications, you generally have two main strategies you can adopt:
+
+Cloud-based deployment (public, private, or hybrid): This strategy involves utilizing external cloud services to access and integrate LLMs via APIs. It leverages the provider’s infrastructure, which offers scalability, ease of integration, and continuous access to the latest updates and features.
+
+It is best suited for applications that require high flexibility, rapid scaling, and minimal maintenance overhead. It’s ideal for businesses looking for cost-effective solutions that don’t need significant infrastructure investments.
+
+It is suitable for start-ups, tech companies, and organizations with dynamic needs that benefit from regular updates and advancements. It’s also a good fit for scenarios where data privacy and compliance requirements are less stringent.
+
+On-premises deployment: This approach involves deploying LLMs within your infrastructure, allowing for greater control over data and customization. It requires managing the technical aspects of installation, maintenance, and scaling within your environment.
+
+It is best suited for applications with stringent data security, compliance, or regulatory requirements. It’s ideal for organizations with the necessary resources to manage and maintain their infrastructure and those needing tailored models or specific customization.
+
+It is suitable for enterprises in regulated industries (e.g., finance, healthcare) or those with significant data sensitivity concerns. It is also advantageous for organizations with existing infrastructure that can support and benefit from the customization and control offered by on-premises deployment.
+
+Each deployment option has its own set of advantages and aligns with different organizational needs and strategies, allowing businesses to choose the approach that best fits their specific requirements and constraints. For a detailed understanding of the responsibilities involved in cloud-based contracts, refer to the NCSC publication detailing the shared responsibility matrix between customers and cloud providers at https://www.ncsc.gov.uk/collection/cloud/understanding-cloud-services/cloud-security-shared-responsibility-model. Although this model is outside the scope of this book, it outlines the boundaries of responsibilities for both parties and highlights the fundamental flaws and risks associated with cloud versus on-premises deployments.
+
+To simplify the main differences and pros and cons of deployment type (cloud vs. self hosted), let’s take a look at the following comparison table:
+
+Deployment type
+
+	
+
+Pros
+
+	
+
+Cons
+
+
+
+
+Cloud (Managed LLM APIs)
+
+	
+
+Instant access to frontier models; elastic scaling for variable inference loads; no GPU infrastructure costs; managed RAG/vector db integrations; built-in safety guardrails and monitoring
+
+	
+
+Data/prompts sent to third party (privacy risk); unpredictable per-token costs; vendor lock-in; limited model customization; potential latency/API throttling
+
+
+
+
+On-premises (Self-hosted)
+
+	
+
+Complete data sovereignty; full control over model weights, fine-tuning, and versions; no API limits; predictable high-volume costs; compliance assurance for regulated data
+
+	
+
+Massive GPU hardware investment; deep ML Ops expertise required; complex serving infrastructure (vLLM, TensorRT-LLM); manual scaling; responsible for security and updates
+
+Table 9.1 – The pros and cons of the application deployment options for LLMs
+
+In today’s world, the primary usage of LLMs is embedding them into new or existing applications to enhance their productivity and performance. To ensure successful implementation, it’s crucial to focus on several key factors that contribute to a positive user experience and tangible benefits:
+
+Data coverage: Does the model have access to the data to help answer my question?
+Search quality: Does the model successfully retrieve the data to answer my question?
+Model quality: Assuming the model successfully retrieves the right data, does it give me the right answer to my question?
+Failing gracefully: If the LLM application fails, can I easily intervene or escape the experience to take over and continue achieving my objective?
+Latency: Is the LLM application faster to use than just trying to carry out my task without it?
+Interface coverage: Can I access the LLM application in the places I need it (web, mobile, etc.)?
+
+Integrating each of these foundational pillars implicitly inherits unique risks and vulnerabilities that add complexity to the deployment strategy, depending on what is introduced and where. There is no one single solution to apply, and it must be customized to your specific needs. That said, arguably the simplest and most effective method for safeguarding stakeholders of LLM applications is integrating a human-in-the-loop mechanism.
+
+Overall, security through transparency can be an effective approach if implemented thoughtfully and strategically. For example, if a chatbot is vulnerable to prompt injection and has the privileges to implicitly invoke tools that perform Create, Read, Update, and Delete (CRUD) resource actions on third-party APIs, and a human-in-the-loop invocation is required for the second step in multi-tool use, the prompt injection attack would fall short due to this security failsafe mechanism. It is worth noting that these countermeasures can be pitfalls to user experience, which is a product-led decision when integrating controls.
+
+When deciding between a cloud-based and on-premises deployment for LLM applications, several criteria from a development, security, and product perspective come into play. The decision depends on various factors, including data sensitivity, cost, scalability, compliance, and specific use case requirements. Some of the common factors where security comes into play include, but are not limited to, the following:
+
+Data sensitivity and privacy:
+On-premises: This is the preferred option when dealing with highly sensitive data, such as personally identifiable information (PII), healthcare records, financial data, or intellectual property. On-premises deployments provide more control over data and minimize the risk of data exposure to third parties.
+Cloud-based: This is more suited for less sensitive data or when the cloud provider offers sufficient security measures (e.g., encryption, secure access controls) and compliance certifications (e.g., the Health Insurance Portability and Accountability Act (HIPAA), the General Data Protection Regulation (GDPR)). It is crucial to evaluate the cloud provider’s data residency and security guarantees.
+Compliance and regulatory requirements:
+On-premises: These are beneficial for industries that must comply with strict regulatory requirements (e.g., healthcare, finance, government). On-premises solutions can be tailored to meet specific compliance needs.
+Cloud-based: Cloud providers often offer compliance with various regulatory standards. However, it is important to verify whether these meet the specific requirements of the organization or region.
+Infrastructure and resource management:
+On-premises: On-premises guarantees that you control your own data lake and storage while also preventing processing from third-party vendors. Additionally, an air-gapped solution can be architected to isolate network segments. However, as the software layer is managed by the customer, patching and vulnerability management are of utmost importance. Some on-premises deployments may be the only option if specific hardware criteria are required by dependencies of the business or its customers.
+Cloud-based: Cloud providers handle the majority of the infrastructure management process, reducing the burden on internal IT teams. They also provide isolation natively through controls such as VPCs, firewalls, and cloud-layer abstractions, all of which prevent the risk of adversarial tactics such as footholding or lateral movement.
+Flexibility and control:
+On-premises: This option offers complete control over the environment, allowing for custom configurations, optimizations, and integration with existing systems. This is ideal for organizations with specific needs or custom workflows.
+Cloud-based: While offering flexibility in terms of services and resources, the environment is more standardized. Customization may be limited to the features and services provided by the cloud platform.
+Disaster recovery and business continuity:
+On-premises: Organizations must have their own disaster recovery plans and infrastructure in place, which can be complex and costly
+Cloud-based: Cloud providers often offer robust disaster recovery solutions and redundancy across multiple regions, ensuring high availability and business continuity
+Use case and workload characteristics:
+On-premises: This option is ideal for workloads that require consistent performance, high security, or are highly regulated. It is also suitable for organizations that have already invested in on-premises infrastructure.
+Cloud-based: This option is better suited for variable workloads, development and testing environments, and use cases that benefit from the flexibility and scalability of the cloud.
+
+The decision between utilizing a cloud-based or on-premises deployment for LLM applications should be guided by a careful assessment of these criteria. Some organizations often adopt a hybrid approach, leveraging both cloud and on-premises resources, depending on the specific needs of each workload and whether they are moving from a brownfield ecosystem (legacy systems and applications) or starting a greenfield (new) deployment.
+
+As of today, the predominant adoption of LLM applications in cloud provider environments is largely due to several key factors:
+
+Graphics processing unit (GPU) and tensor processing unit (TPU) availability: LLMs, especially state-of-the-art models, require powerful GPUs or even more specialized hardware, such as TPUs, for training and inference. These specialized hardware resources are expensive and require significant investment to acquire and maintain on-premises.
+Access to cutting-edge hardware: Cloud providers such as AWS, Google Cloud, and Azure offer access to the latest GPUs (e.g., NVIDIA A100, V100) and TPUs without requiring organizations to invest in hardware. They continuously upgrade their infrastructure to offer the latest hardware, which can be crucial for performance optimization and cost efficiency.
+Dynamic resource allocation: Cloud environments provide on-demand compute resources, allowing organizations to scale up or down based on workload requirements. For LLM training, which can be highly variable in terms of computational demand, this flexibility is invaluable.
+Cost efficiency: Instead of over-provisioning resources on-premises (which can lead to wasted capacity) or under-provisioning (which can cause performance bottlenecks), organizations can pay only for what they use in the cloud. This pay-as-you-go model is particularly suited for LLM tasks that might require massive parallel processing power in short bursts.
+High storage needs: LLMs typically require massive amounts of data for both training and fine-tuning. Cloud providers offer scalable storage solutions with high I/O performance to handle these vast datasets. They also provide data management services that are optimized for big data operations.
+Integration with data pipelines: Cloud platforms facilitate easy integration with existing data pipelines, allowing for seamless data ingestion, transformation, and feeding into LLM training processes.
+Avoiding upfront capital expenditure: Building an on-premises setup for LLMs is capital-intensive, involving not just the cost of GPUs/TPUs but also the supporting infrastructure (e.g., power, cooling, networking). Cloud-based LLM deployments allow organizations to avoid these upfront costs.
+Reduced maintenance overhead: Cloud providers manage the underlying hardware, software updates, scaling, and maintenance. This allows organizations to focus on model development and deployment without the need for dedicated infrastructure management teams.
+Access to managed services: Cloud providers offer managed services such as Amazon SageMaker, Google AI Platform, and Azure Machine Learning, which provide tools, libraries, and pre-built environments for LLM development. These managed services accelerate the development process and reduce the time to market for LLM applications.
+Collaboration and versioning: Cloud environments facilitate collaboration among data scientists and developers through shared resources, centralized version control, and easy deployment environments. This collaborative environment is crucial for agile development and iteration on LLM models.
+Built-in redundancy: Cloud providers offer built-in redundancy and failover capabilities across multiple geographic regions, which is crucial for maintaining the high availability of LLM applications, especially in production environments.
+Disaster recovery: Managed disaster recovery solutions in the cloud reduce the complexity and cost associated with ensuring data integrity and continuity.
+Advanced security features: Cloud providers invest heavily in security, offering robust security features such as end-to-end encryption, identity and access management (IAM), distributed denial-of-service (DDoS) protection, and monitoring tools that help safeguard LLM models and data.
+Compliance certifications: Cloud environments often meet a wide range of industry standards and regulations (e.g., GDPR, HIPAA, and Systems and Organization Controls (SOC 2), which can simplify compliance for organizations deploying LLM applications.
+Ecosystem and community support: Cloud providers offer rich ecosystems with integrated tools, libraries, and support for popular machine learning frameworks (e.g., PyTorch, TensorFlow). This extensive ecosystem reduces the complexity and cost of integrating and maintaining LLM applications.
+Economies of scale: Cloud providers benefit from economies of scale, enabling them to offer lower prices for compute and storage resources compared to what most organizations could achieve independently.
+
+The overall benefits of the cloud, especially for dynamic, compute-heavy tasks such as implementing LLMs, make it the more popular choice to date and the dominant selection for pretty much every LLM application on today’s market. It does not go without saying that data privacy and security are recurring hot topics in the space of generative AI. Trends of alternative foundation model providers using cloud-based SaaS services have been superseded by open source and sometimes smaller models (e.g., Mistral, Llama from Meta) and services such as Ollama that allow users to run models locally or on private ecosystems to preserve their data from cloud storage and third-party processing and logging.
+
+Adapting the Top 10 to chatbots and conversational AI systems
+
+In recent years, chatbots and conversational AI systems have become integral to customer engagement, providing instant support and personalized experiences. However, real-world breaches expose critical vulnerabilities. In 2025, McDonald’s AI recruitment chatbot leaked 64 million applicant records when researchers accessed Paradox.ai’s backend using simple passwords like “123456,” exposing names, emails, and phone numbers without multi-factor authentication (https://cybermagazine.com/news/how-mcdonalds-ai-bot-exposed-millions-of-peoples-data)
+
+Similarly, OmniGPT suffered a breach compromising 30,000 users’ personal data and 34 million conversation lines, including credentials and API keys (https://www.skyhighsecurity.com/about/resources/intelligence-digest/bot-busted-up-ai-chatbots-alleged-data-leak.html).
+
+These incidents prove chatbot interactions are prime targets for data exfiltration. This section adapts the OWASP Top 10 specifically for LLM applications in conversational AI, helping you safeguard against such emerging threats. In Chapter 8, we formed a risk profile for each vulnerability. In this section, we’ll do a deeper dive into mapping the relevant OWASP Top 10 vulnerabilities to chatbots and conversational AI agents, specifically regarding how the vulnerability is contextual or higher risk in these types of LLM applications. The idea of the following content is to provide a deep dive into each vulnerability and distinguish the key factors for each deployment scenario. This is not a threat modeling exercise and instead highlights key focus areas that should be considered for each vulnerability, depending on how an LLM application is architected.
+
+An example of a vulnerability that has a deployment-dependent risk profile is when security researchers recently discovered token-length side-channel attacks in AI products based on the concepts of tokenization (i.e., converts text into model-understandable units) and common API endpoints that support LLM generation streaming (where the model generation is printed word by word, rather than as a whole block) by reverse engineering even encrypted payloads to determine accurate assessments of the client and model conversation. If we were to develop our own SaaS or cloud-based deployment model for customers, we may deem this a sufficient risk for employing mitigation strategies, such as introducing random padding into API responses. However, with a closed on-premises deployment, the risk is either significantly low or otherwise insignificant since this would most likely not be hosted on the public internet. However, if the application was purely hosted within an on-premises deployment but accessible on the public internet, then it would also have the same risk relevance.
+
+It’s also worth noting that for closed on-premises deployment strategies, the risks associated with target client stakeholders may be lower compared to cloud-based deployments. This is due to the controlled environment often being limited to a specific customer scenario, which avoids broader public exposure. However, user input should always be treated as inherently untrusted. For example, during fine-tuning, training data poisoning remains a concern—if confidential or proprietary data is insufficiently sanitized before being incorporated into the model, this information could unintentionally surface in future outputs, posing significant risks.
+
+When it comes to most on-premises customer-focused deployments for chatbots and conversational agents, the model and application are shipped to the remote infrastructure in the form of a container from the provider. Regardless of this being an on-premises environment, sandboxing and segmentation or air-gap controls must be adhered to in order to provide the application with the runtime environment required, but to the least extent possible. This is commonly known as zero-trust network architecture and involves the principle of least privilege (PoLP), which is a heavily DevSecOps-oriented approach to adhering to the best security posture possible. Both the network and application layers are the most relevant layers where controls can be applied, whether this is an allow list for network firewall rules to use a database for retrieval-augmented generation (RAG) document retrieval, or a token and its associated permission scopes to hook up the application to Slack or another productivity tool.
+
+There are three deployment options for common LLM application providers that are available to customers. Let’s look at each option in more detail.
+
+SaaS
+
+SaaS, from an LLM application provider’s perspective, can be hosted in either a cloud-based or on-premises deployment. It offers an efficient and rapid onboarding solution for customers utilizing LLMs. By leveraging a SaaS platform, users can immediately access and deploy LLM capabilities without the complexities of managing backend infrastructure. This streamlined approach allows organizations to focus on leveraging the technology for their specific needs while the SaaS provider handles the technical complexities, ensuring quick and effective integration into their existing systems. Additionally, since the majority of applications on the market exist as SaaS solutions, it is very common for these solutions to adopt generative AI by integrating LLMs. Several popular SaaS applications have successfully integrated LLMs to enhance their offerings. Here are some notable examples:
+
+Grammarly: This writing enhancement platform leverages LLMs to deliver grammar and style suggestions that are context-sensitive. Its tone detection feature evaluates the text to identify its emotional undertone, assisting users in tailoring their writing to convey the desired sentiment effectively.
+Amazon Alexa: This virtual assistant has received enhancements through a custom LLM, which significantly boosts its conversational skills and overall functionality, resulting in more natural and contextually relevant interactions.
+StarCoder: Created by Hugging Face and ServiceNow, this LLM supports developers by comprehending and generating code snippets. It streamlines coding tasks such as autocompletion and assists with various programming languages.
+
+SaaS is an ideal option in the following scenarios:
+
+Small to medium-sized businesses
+Experimenting with generative AI
+Handling non-sensitive data
+Cloud AI platforms
+
+LLM application providers can leverage various cloud-based platforms to integrate LLMs into their existing applications with ease. These platforms offer seamless integration and scalability, allowing businesses to deploy and manage LLMs without the need for extensive on-premises infrastructure.
+
+Cloud platforms are an ideal option in the following scenarios:
+
+When data scientists require heavy compute workloads
+Companies are seeking easy integration with cloud services and native integrations for security and development efficiency
+Organizations are hosting LLM applications that utilize multi-tenancy, such as SaaS
+
+The following table takes a closer look at the OWASP Top 10 vulnerabilities and maps their relevance to a cloud-based conversational agent or chatbot in the form of an LLM application:
+
+Vulnerability
+
+	
+
+Relevance to cloud-based LLM applications
+
+	
+
+Cloud-based advantages in defense of prompt injection
+
+	
+
+Disadvantages
+
+	
+
+Examples
+
+
+
+
+Prompt Injection
+
+	
+
+In cloud deployments, LLMs are often exposed through APIs, making them vulnerable to user inputs that can be crafted maliciously.
+
+	
+
+Utilizing managed services with built-in validation layers can help sanitize and validate user inputs before they’re processed through the model, reducing the risk of prompt manipulation.
+
+	
+
+Lack of potential visibility and controls compared to other solutions or custom in-house methods and tooling.
+
+	
+
+AWS content filters (prompt injection filters).
+
+
+
+
+Insecure Output Handling
+
+	
+
+Output streams from LLMs deployed in the cloud need strict filtering before they are returned to users since they can contain sensitive information.
+
+	
+
+Cloud environments can provide automated filtering mechanisms. Leveraging cloud-based AI services with advanced output filtering capabilities can ensure that all responses are screened for sensitive information or harmful content before being delivered to users.
+
+	
+
+Lack of potential visibility and controls compared to other solutions or custom in-house methods and tooling.
+
+	
+
+Google Cloud Vision API content filters (generation filters).
+
+
+
+
+Training Data Poisoning
+
+	
+
+Cloud-based models can be trained on data from public sources that may include poisoned samples, compromising the model’s integrity.
+
+	
+
+Access to vast datasets for training purposes; models can learn from diverse inputs. Data can be inserted into a streamlined pipeline for pre-process sanitization and verification to establish solid data lineage.
+
+	
+
+Compromised data can lead to skewed model behavior or even adversarial outputs during inference.
+
+	
+
+Google Cloud Vertex AI.
+
+
+
+
+Model Denial of Service
+
+	
+
+Cloud-based LLMs can be susceptible to DDoS attacks or high request rates that saturate the service’s capacity.
+
+	
+
+Cloud providers have dominant footprints and host extremely robust mechanisms to mitigate traffic spikes and scalability, enhancing uptime. Implementing rate limiting and auto-scaling features available in cloud services can help absorb sudden spikes in traffic and maintain availability, preventing service disruptions.
+
+	
+
+LLM application developers have to rely on uptime from the cloud provider. A cloud provider may also be targeted due to them hosting an alternate service or customer, which can have repercussions for your platform.
+
+	
+
+Google Cloud Armor and its black-box perimeter network defenses.
+
+
+
+
+Supply Chain Vulnerabilities
+
+	
+
+Cloud deployments often integrate numerous libraries and services, making them vulnerable if any component in the supply chain is compromised.
+
+	
+
+Cloud environments facilitate rapid integration of third-party tools for enhanced functionality.
+
+	
+
+A vulnerable library used in a cloud-based LLM can be exploited, leading to unauthorized access to user data.
+
+	
+
+Google Cloud Artifact Registry (Software Bill of Materials (SBOM) functionality).
+
+
+
+
+Sensitive Information Disclosure
+
+	
+
+In cloud settings, data exposure risks increase as multiple users access the model simultaneously, making it harder to control sensitive outputs.
+
+	
+
+Adopting cloud services that provide data encryption, both at rest and in transit, can safeguard sensitive information and ensure compliance with data protection regulations.
+
+	
+
+Application data resides on third-party infrastructure that is reliant on the uptime, sovereignty, and security of its transmission and storage. Storing data on a third-party system in certain locations may not be valid when you wish to meet certain compliance regulations.
+
+	
+
+An LLM discloses proprietary algorithms during a session due to insufficient filtering of its responses.
+
+
+
+
+Insecure Plugin Design
+
+	
+
+Cloud-based LLMs might allow third-party plugins, which could lack adequate security measures, exposing the system to attacks. Alternatively, they may support limited integration and sandboxing features.
+
+	
+
+Using cloud-based environments with strict permission controls and a vetted marketplace for plugins can minimize the risk of insecure extensions being deployed.
+
+	
+
+Application providers share infrastructure resources through multi-tenancy and rely on cloud provider safeguards.
+
+	
+
+AWS Lambda and its serverless function
+
+
+
+
+Excessive Agency
+
+	
+
+In cloud environments, LLMs might execute commands or provide outputs that users take as definitive without human oversight.
+
+	
+
+Enhanced responsiveness can improve user interaction and satisfaction.
+
+	
+
+Lack of human oversight can lead to the model making harmful or erroneous decisions.
+
+	
+
+A cloud-based LLM autonomously adjusts user settings based on ambiguous requests, causing unintended consequences.
+
+
+
+
+Overreliance
+
+	
+
+Cloud deployment increases user trust in LLM outputs due to easy access, potentially leading to uncritical acceptance of flawed information.
+
+	
+
+Cloud providers often offer tools for transparency and interpretability, allowing organizations to implement mechanisms that encourage users to verify critical information and make informed decisions.
+
+	
+
+Users might ignore critical thinking and validation processes, leading to poor decisions based on inaccurate outputs.
+
+	
+
+Users base critical business decisions on a recommendation made by an LLM without verifying the information.
+
+
+
+
+Model Theft
+
+	
+
+Cloud environments, particularly those with weak API security, can make it easier for attackers to extract model weights or data.
+
+	
+
+Hosting the model within a secure cloud environment that employs encryption, access controls, and monitoring can reduce the likelihood of model theft and protect intellectual property.
+
+	
+
+The same as rate-limiting in that you are a victim of your cloud provider’s threat actors.
+
+	
+
+Google Cloud Storage’s data encryption and transmission standards.
+
+Table 9.2 – Demonstrating the OWASP Top 10 vulnerabilities’ relevance to cloud-based LLM applications
+
+Each vulnerability presents unique challenges for LLM application providers, particularly in cloud environments where ease of deployment, scalability, and integration with third-party services can inadvertently introduce risks. Understanding these vulnerabilities enables providers to implement robust security measures, ensuring that their applications remain resilient against potential threats while maximizing the benefits of cloud-based solutions.
+
+That being said, adopting a cloud provider’s infrastructure so that it can host an LLM application can be advantageous for developers. As well as their efficiency and cost-effectiveness, there are security-related benefits to using services provided by cloud providers to build LLM applications. Let’s consider an example of hosting an integrated code interpreter where a client can interact with a chatbot with coding capabilities. This was illustrated in Chapter 8, and it was shown to be a vector for attackers to foothold, pivot, laterally move, and potentially remain persistent through this kind of feature. This application integration can map to several of the OWASP Top 10 vulnerabilities, but the most prominent is Insecure Plugin Design.
+
+Let’s look at the benefits of using cloud-based deployments for chatbots and conversational agents:
+
+Isolation and security by design:
+Serverless architecture: By leveraging serverless computing services such as AWS Lambda, Google Cloud Functions, and Azure Functions, each code execution request runs in a stateless environment that is inherently isolated from other processes. This isolation means that if an attacker attempts to exploit vulnerabilities within the embedded code interpreter, their access is limited to that specific execution context, significantly reducing the potential blast radius of any attack.
+Example: If malicious code is executed through the embedded interpreter, it cannot affect the underlying infrastructure or other running applications, as each function execution is contained within its own secure environment.
+Automatic security updates and compliance:
+Managed security: Cloud providers regularly update their serverless platforms to patch vulnerabilities and enhance security protocols. This means that developers do not have to manage security updates manually, reducing the risk of unpatched vulnerabilities being exploited.
+Example: The cloud provider ensures that the runtime environments for code execution are always up to date with the latest security features and compliance standards, automatically shielding the LLM application from newly discovered threats.
+Granular permissions and access control:
+Fine-grained access control: Cloud providers enable developers to implement granular permission policies, ensuring that the embedded code interpreter has only the necessary permissions to execute the intended tasks without exposing sensitive data or system functions.
+Example: An LLM application can be configured so that the embedded code interpreter can only access specific APIs and resources, minimizing the risk of unauthorized data access.
+Built-in monitoring and logging:
+Enhanced visibility: Serverless functions come with integrated monitoring and logging capabilities, allowing developers to track usage patterns and detect anomalies in real time
+Example: If an unusual spike in code execution requests occurs, alerts can be triggered, enabling rapid investigation and response to potential security incidents before they escalate
+
+By hosting an embedded code interpreter in an LLM application using a cloud provider’s serverless architecture, organizations can achieve a more secure deployment strategy. This approach not only minimizes the attack surface but also leverages the cloud provider’s security features, automated updates, and access control mechanisms to create a resilient environment. The inherent isolation of serverless functions reduces the impact of any potential security breaches, allowing organizations to focus on delivering innovative LLM capabilities while maintaining strong security postures.
+
+Recently, a security researcher surfaced a vulnerability involving the use of LLMs such as ChatGPT, which may inadvertently expose sensitive data through their memory mechanisms (https://embracethered.com/blog/posts/2024/chatgpt-hacking-memories/). Here are some key points to consider:
+
+Memory mechanism: Some LLMs can retain information from interactions, which could be exploited by attackers to extract sensitive data. This vulnerability is particularly concerning for applications that handle confidential information or PII.
+Potential attack vector: Attackers can craft queries designed to manipulate the model into revealing sensitive information stored in its memory, leading to possible data breaches.
+
+Now, let’s understand the risk profile of cloud-based deployment strategies for chatbots and conversational agents:
+
+Data exposure: High risk of leaking sensitive information, which can result in legal ramifications, loss of customer trust, and financial losses
+Reputational damage: Companies may face reputational harm due to the mishandling of sensitive data
+Compliance violations: Failure to protect sensitive information can lead to violations of regulations such as GDPR, HIPAA, and others
+Operational impact: Exploits could disrupt business operations and lead to costly incident response efforts
+
+Adopting a cloud provider’s infrastructure service offerings, such as AWS Lambda, can significantly mitigate the risks associated with this vulnerability:
+
+Isolation: Lambdas are isolated environments by default, which minimizes the risk of cross-application data leakage. Each function runs in its own execution environment, limiting the potential for an attacker to access memory from other instances.
+Ephemeral compute: Lambdas are stateless and ephemeral, meaning they do not retain memory between invocations. This inherently reduces the risk of sensitive information being accessed in subsequent interactions.
+Granular permissions: AWS IAM policies allow for fine-grained control over what resources Lambdas can access, further enhancing security.
+Automated security updates: Cloud providers often handle security updates and patches automatically, reducing the overhead for organizations to manage vulnerabilities.
+Monitoring and auditing: Built-in tools for logging and monitoring (e.g., AWS CloudTrail and CloudWatch) enable organizations to detect and respond to potential security incidents in real time.
+
+The isolation and stateless nature of Lambdas significantly mitigate the risks associated with memory-based vulnerabilities, providing a more secure environment for handling sensitive data.
+
+Having discussed public cloud deployments, let’s move on and consider private deployment strategies.
+
+Private deployments
+
+LLM application providers can deploy LLMs within on-premises infrastructures to gain maximum customization and control. By integrating LLMs into their environments, organizations can ensure complete oversight of security protocols, data residency, and tailored configurations. This approach allows for a more secure and compliant framework as businesses can implement specific security measures that align with their unique operational requirements and ensure adherence to relevant regulations. Hosting models on-premises helps organizations maintain sensitive data within their jurisdiction, making it easier to comply with strict standards such as GDPR, HIPAA, and the Payment Card Industry Data Security Standard (PCI DSS). While this strategy may necessitate additional resources for maintenance and management, it enables organizations to have a finely tuned deployment that meets their precise needs.
+
+Here are some of the areas where using private deployments for chatbots and conversational agents is beneficial:
+
+Organizations with strict data residency and compliance needs (e.g., governing organizations)
+Companies requiring maximum security and customization
+Organizations handling sensitive or customer-specific data
+
+This breakdown helps illustrate the flexibility of LLM deployment, whether businesses need simple access for experimentation purposes or robust solutions for security and compliance.
+
+The following table takes a deeper dive into the OWASP Top 10 vulnerabilities and covers how they’re relevant to an on-premises-based conversational agent or chatbot in the form of an LLM application:
+
+Vulnerability
+
+	
+
+Relevance to On-Prem LLM Applications
+
+	
+
+Advantages (On-Prem Context)
+
+	
+
+Disadvantages (On-Prem Context)
+
+	
+
+Examples
+
+
+
+
+Prompt Injection
+
+	
+
+On-prem LLMs often integrate deeply with internal business systems; internal users, scripts, or legacy apps can provide untrusted input, making prompt injection a key insider/ adjacent-system risk.
+
+	
+
+Full control over preprocessing, internal filters, and policy enforcement without relying on a cloud vendor.
+
+	
+
+False sense of “trusted internal users” may lead to under-investing in prompt validation or content filters.
+
+	
+
+An internal user crafts a prompt that causes the LLM to leak restricted internal HR procedures.
+
+
+
+
+Insecure Output Handling
+
+	
+
+On-prem deployments frequently have direct access to sensitive internal data, so any unfiltered output can accidentally disclose high-value information.
+
+	
+
+Ability to apply internal DLP, logging, and redaction that does not depend on cloud features.
+
+	
+
+Must manually design output sanitization; legacy internal apps consuming LLM output may not enforce security.
+
+	
+
+LLM outputs unredacted PHI from an internal medical records system after retrieval.
+
+
+
+
+Training Data Poisoning
+
+	
+
+On-premises datasets often come from heterogeneous internal systems with inconsistent governance. Insider manipulation or outdated internal sources may contaminate training sets.
+
+	
+
+Full supervision over data lineage and provenance, including private storage and restricted registries.
+
+	
+
+Internal dataset controls are often weaker than cloud-managed pipelines; risks of stale, biased, or maliciously altered internal data.
+
+	
+
+An internal employee modifies a knowledge base that is automatically used for nightly fine-tuning.
+
+
+
+
+Model Denial of Service (DoS)
+
+	
+
+On-prem hardware has fixed capacity. Local users, batch jobs, or internal automated systems can overwhelm GPU/CPU resources.
+
+	
+
+Predictable environment allows fine-grained resource scheduling and QoS.
+
+	
+
+No auto-scaling; hardware saturation leads to downtime. Internal noise traffic (not attackers) is the most common DoS source.
+
+	
+
+An internal automation system unintentionally floods the LLM service with high-frequency queries, causing GPU exhaustion.
+
+
+
+
+Supply Chain Vulnerabilities
+
+	
+
+On-prem LLM stacks require local installation of drivers, runtimes, OS patches, CUDA, model loaders, tokenizer libraries, etc. Slow internal patch cycles magnify exposure.
+
+	
+
+You can enforce internal artifact registries, SBOM policies, and strictly vetted packages.
+
+	
+
+Heavy operational burden; internal IT teams must audit every dependency manually and keep up with CVEs.
+
+	
+
+Unpatched local inference engine library exposes memory from GPU buffers used by the model.
+
+
+
+
+Sensitive Information Disclosure
+
+	
+
+On-prem systems typically hold more sensitive data in closer proximity—HR, finance, R&D, operations. LLMs integrated with these systems risk leaking data through responses or logs.
+
+	
+
+Local network segmentation and physical security significantly reduce outside exfiltration paths.
+
+	
+
+Internal leakage is still high risk; role-based access across model, logs, prompts, and outputs is complex to enforce.
+
+	
+
+LLM regurgitates sensitive design documents because they were ingested by an internal vector database.
+
+
+
+
+Insecure Plugin/ Tool Design
+
+	
+
+On-prem deployments often use custom-built connectors to internal databases, file servers, operational systems, or scripts. Poorly designed tools can enable dangerous internal access paths.
+
+	
+
+You can fully restrict tool capabilities to internal-approved systems only.
+
+	
+
+Internal plugins often lack robust security reviews; they may allow privilege escalation inside the corporate network.
+
+	
+
+A plugin for “run internal scripts” allows execution of administrative shell commands on shared servers.
+
+
+
+
+Excessive Agency
+
+	
+
+On-prem LLM agents may be granted operational privileges (restart services, modify internal records, file changes, initiate workflows). Over-granting is common in private environments.
+
+	
+
+Ability to build high-trust automations for internal workflows.
+
+	
+
+Over-enablement can cause operational damage; lack of human-in-the-loop controls leads to erroneous actions.
+
+	
+
+An on-prem agent with access to a ticket system closes or reassigns real incidents incorrectly.
+
+
+
+
+Overreliance
+
+	
+
+Because the system is internal and “trusted,” staff may overuse it for decisions involving sensitive operations (procurement, compliance, engineering).
+
+	
+
+LLM deeply accelerates internal tasks when used with proper oversight.
+
+	
+
+Internal teams may assume privacy and safety because it is on-prem, reducing critical review of outputs.
+
+	
+
+Finance staff rely on LLM-generated summaries instead of validating underlying numbers, resulting in report errors.
+
+
+
+
+Model Theft
+
+	
+
+On-prem systems are more exposed to insider access, shared servers, backups, NFS mounts, and physical access—making weight theft a major risk.
+
+	
+
+Strong physical controls, isolated networks, and offline clusters reduce external threat vectors.
+
+	
+
+Insiders can copy model weights, training data, or checkpoints; once copied, loss is irreversible. Backup systems are often under-protected.
+
+	
+
+An administrator copies model weights from a shared file system and stores them on a removable drive.
+
+Table 9.3 – Demonstrating the OWASP Top 10 vulnerabilities’ relevance to on-premises-based LLM applications
+
+In the context of deploying on-premises conversational agents utilizing LLM applications, each of these vulnerabilities presents unique challenges and considerations. While on-premises environments provide the advantage of direct control over data and infrastructure, they also demand rigorous internal security practices and comprehensive monitoring to mitigate potential risks. Organizations must balance the benefits of customization and direct oversight with the vulnerabilities that come with managing their infrastructure and dependencies. By implementing stringent security measures, conducting regular audits, and fostering a culture of security awareness, organizations can significantly reduce their exposure to these vulnerabilities while maximizing the value derived from their LLM applications.
+
+Applying the Top 10 to content generation and creative AI applications
+
+As technology evolves, so do the threats to conversational AI systems. Consider how emerging trends such as quantum computing or deepfake technologies might impact multi-modal LLMs, which are the driving force behind content generation and creative AI applications. The overwhelming opportunity presented by content generation and creative AI applications, which are powered by multimodal LLMs, opens yet another avenue for LLM applications to generate media content, as well as text through NLP. While these types of sophisticated LLM applications still adhere to vulnerabilities present in the OWASP Top 10 for LLM applications, they do not differentiate much under the hood since the inner workings of the ecosystem and deployment strategy remain somewhat identical. Instead, companies should focus on the ethical and legal repercussions that stem from generations that do not adhere to the terms and conditions and example usage of the service.
+
+It goes without saying that due to the type of offering and its capabilities, these types of LLM applications will be leveraged by sophisticated adversaries, APTs, and nation-state affiliations for adversarial offensive capabilities, including the use of deepfake media creation, to launch several attack types such as fraudulent impersonation, phishing/whaling, harmful, societal or harm caused through the spread of propaganda/misinformation, and more. These threats can be somewhat mitigated through LLM application controls, such as in NLP (e.g., prompt filters), but this is not a fully robust solution; instead, we should rely on model safety controls. The following are some key examples of this occurring in our world:
+
+In recent years, deepfakes have emerged as a powerful tool for disinformation, with Russian state-sponsored actors utilizing this technology to create realistic yet false videos. During the war with Ukraine, deepfakes were employed to depict the Ukrainian prime minister in fabricated propaganda videos, aimed at undermining trust, causing chaos, and manipulating public opinion both domestically and internationally (https://www.npr.org/2022/03/16/1087062648/deepfake-video-zelenskyy-experts-war-manipulation-ukraine-russia).
+In a striking example of the real-world impact of deepfakes, a highly realistic image depicting the White House engulfed in flames was circulated on Twitter, causing widespread panic. The deepfake, which went viral rapidly, manipulated stock prices and led to market volatility, demonstrating how synthetic media can be weaponized to disrupt economies (https://www.nbcnews.com/tech/misinformation/fake-picture-explosion-pentagon-spooks-twitter-rcna85659).
+
+When it comes to applying the Top 10 to content generation and creative AI applications, consider the fact that LLMs now receive inputs from the client outside of traditional text-based methods. An example of this is an image where the model is requested to parse the highlighted text on a menu in Slovenian and translate it into English. The two key vulnerabilities from the Top 10 are highlighted by this key differentiation regarding these types of applications compared to conversational agents, which process and return text:
+
+LLM01: Prompt Injection:
+Both direct and indirect prompt injection can occur due to the incoming media presented to the chatbot, such as a glitch token. Glitch tokens (that is, anomalous tokens) are unexpected inputs that exploit weaknesses in a machine learning model, causing it to produce incorrect or unpredictable outputs. These tokens can disrupt the model’s behavior, revealing vulnerabilities in how it processes or interprets data. One of the easiest-to-understand glitch tokens affecting GPT models is a random, uncommon sequence of characters or symbols that causes the model to produce strange or irrelevant outputs. For example, inserting a rare token such as a string of unusual symbols (▓▓▓▓) might lead to nonsensical or unexpected responses because the model has little or no training data associated with such inputs, making it behave unpredictably.
+Additionally, attackers may add slight perturbation modifications to an image that are not visible to humans but would redirect a model to take an unexpected downstream action. A good example is autonomous driving systems, which use LLMs and computer vision models for decision-making. Attackers could add subtle perturbations to street signs, which are imperceptible to human drivers but cause the model to misclassify a stop sign as a yield sign. This could cause the vehicle to make dangerous decisions, such as failing to stop at an intersection, leading to potential accidents. This form of attack, known as adversarial perturbation, exploits the model’s sensitivity to small changes in the input data.
+LLM03: Training Data Poisoning
+In the same vein as prompt injection, we also have to ensure that these forms of prompts from the client do not enter the fine-tuning process and the training pipeline, whether this is non-nefarious PII from a user or a malicious artifact uploaded by an attacker.
+When building an LLM application and developing a model, consider additional data sources (similar to natural text) that contain media-based content. These also require sufficient verification, vetting, and validation regarding the data’s quality and the legitimacy of the content. Consider the following scenarios, which are present for both text and image-based content (the following diagrams are illustrated in an image-based fashion for interpretability and are available at https://github.com/GangGreenTemperTatum/speaking/tree/4e44397367688bcacb7b801facc28e1a635a085a/docs/conferences/dc604/hacker-summer-camp-23) and cited from outstanding security research that was conducted in the paper Poisoning Web-Scale Training Datasets is Practical (https://arxiv.org/abs/2302.10149):
+Split-view data poisoning involves feeding different versions of a dataset to different models or systems, corrupting the training data so that each model sees incomplete or manipulated information, which can lead to incorrect conclusions. This form of poisoning can also extend to poisoning public artifacts by controlling sources of the internet that are commonly used while training popular LLMs via machine learning:
+
+Figure 9.1 – Split-view data poisoning
+
+Frontrunning data poisoning is when an attacker manipulates a system by gaining access to sensitive information before it becomes public, using that knowledge to make profitable actions, such as trades, ahead of others. This can involve a drive-by technique of poisoning public artifacts on the internet that are commonly used when training popular LLMs via machine learning:
+
+Figure 9.2 – Frontrunning data poisoning
+
+In the realm of content generation and creative AI applications, prompt injection and training data poisoning stand out as critical vulnerabilities, often leading to unintended outputs and compromised model integrity. By applying the principles from the OWASP Top 10 for LLM applications, developers can better safeguard these systems, ensuring more secure and reliable creative processes while mitigating the risks associated with adversarial manipulation.
+
+Scaling the Top 10 for enterprise-wide LLM deployment and governance
+
+As enterprises increasingly adopt LLMs for various applications, from customer support to content generation, it becomes crucial to establish robust governance frameworks. An incident involving an enterprise using an LLM to generate marketing content that inadvertently included inappropriate language highlights the risks associated with unchecked AI systems. In this section, we’ll explore strategies we can use to scale the OWASP Top 10 vulnerabilities across organizations, ensuring secure and compliant LLM deployment. Let’s start with the key components.
+
+Framework for enterprise governance
+
+The following are the key components of an enterprise governance framework:
+
+Policies and procedures: Develop clear policies that govern the use of LLMs across departments, addressing security, compliance, and ethical considerations
+Stakeholder involvement: Involve cross-functional teams, including legal, IT, and business units, in governance discussions
+
+In LLM application provider organizations, it’s common practice to form a cross-functional group (most commonly involving security engineers, modeling engineers and developers, safety practitioners, and legal representatives), known as an AI ethics committee or a responsible ML working group, that focuses within workstreams to review LLM deployments, ensuring alignment with company values and compliance with regulations. It’s also a common practice for such groups to identify relevant taxonomies, frameworks, policies, or affiliations to partner with based on their company’s products.
+
+Implementing best practices for security
+
+Scaling the OWASP Top 10 for enterprise-wide LLM deployment is not just about addressing vulnerabilities; it’s about fostering a culture of security and compliance across the organization. By looking out for crucial aspects, such as robust governance frameworks and continuous education, enterprises can harness the power of LLMs while mitigating risks:
+
+Centralized policies: Develop enterprise-wide security policies for LLM applications to ensure consistent implementation
+Automated monitoring tools: Use automated tools to continuously monitor and report LLM interactions and vulnerabilities
+Continuous education: Implement ongoing training programs for employees across all levels to raise awareness about LLM security risks and governance
+Developing an incident response plan: Create a comprehensive incident response plan that includes specific steps for addressing vulnerabilities related to LLMs, ensuring quick and effective action
+Establishing a review cycle: Conduct regular audits and assessments to evaluate the effectiveness of the governance framework and security practices, adjusting them as necessary
+Metrics and key performance indicators (KPIs): Develop KPIs to measure the effectiveness of the governance framework, such as the number of incidents reported, response times, and user feedback on LLM interactions
+
+As the use of LLMs increases across industries, ensuring their security and governance has become increasingly critical. With these models playing roles in everything from content generation to decision-making in high-stakes environments, the potential for adversarial attacks and vulnerabilities—such as prompt injection and data poisoning—cannot be ignored. This is why we see a growing emphasis on responsible AI governance, with organizations working to align with best practices and emerging laws.
+
+Recent advancements in legislation, such as the proposed US AI Incident Reporting and Security Enhancement Act, underscore the urgency of establishing a robust framework to track and mitigate AI-specific vulnerabilities. In parallel, international regulations, such as the EU’s AI Act, aim to ensure transparency and accountability in the deployment of AI solutions, particularly those classified as high risk. For enterprises deploying LLMs at scale, these measures highlight the importance of governance structures that not only align with regulatory standards but also proactively address the unique security challenges presented by AI systems.
+
+Summary
+
+In this chapter, we highlighted the critical importance of tailoring the OWASP Top 10 framework to the specific needs of various LLM applications. By identifying distinct risk profiles and applying targeted mitigation strategies, your organization can enhance the security of chatbots, content generation systems, and decision support applications. This adaptive approach not only protects against emerging threats but also builds resilience and trust in LLM deployments.
+
+From what we’ve learned, it’s clear that a comprehensive governance strategy is essential for scaling these practices enterprise-wide, enabling organizations to navigate the complexities of LLM technology confidently. By integrating these insights into your operational framework, you can empower your organization to harness the transformative potential of LLMs while maintaining a robust security posture in an ever-evolving landscape.
+
+In the upcoming chapter, Designing LLM Systems for Security, we will provide a comprehensive blueprint for building resilient AI systems. We will move from theory to application, detailing the architectural principles, specific controls, and industry best practices necessary to create a secure-by-design environment. You will learn how to implement foundational concepts like defense in depth and zero trust, and how to structure a secure system from the client interface down to the model serving layer, ensuring your LLM is protected against the very threats we have just discussed.
+
+Get This Book's PDF Version and Exclusive Extras
+
+Scan the QR code (or go to packtpub.com/unlock). Search for this book by name, confirm the edition, and then follow the steps on the page.
+
+	
+
+
+
+
+Note: Keep your invoice handy. Purchases made directly from Packt don’t require an invoice.
+
+table of contents
+close x
+AI-Native LLM Security
+
+Vaibhav Malik, Ken Huang, Ads Dawson
+
+Published by Packt Publishing
+queue
+1% complete
+Content Progress 0% completed
+Approx. 13 hours left
+Collapse
+Contents
+Highlights
+AI-Native LLM Security
+100% complete
+checkmark circle
+Contributors
+100% complete
+checkmark circle
+About The Authors
+100% complete
+checkmark circle
+About The Reviewers
+100% complete
+checkmark circle
+Preface
+Part 1: Foundations Of LLM Security
+Chapter 1: Fundamentals And Introduction To Large Language Models
+7% complete
+2
+7% complete
+Securing Large Language Models
+7% complete
+3
+The Dual Nature Of LLM Risks: Inherent Vulnerabilities And Malicious Actors
+Chapter 4: Mapping Trust Boundaries In LLM Architectures
+5
+Aligning LLM Security With Organizational Objectives And Regulatory Landscapes
+Part 2: The OWASP Top 10 For LLM Applications
+Chapter 6: Identifying And Prioritizing LLM Security Risks With OWASP
+Chapter 7: Diving Deep: Profiles Of The Top 10 LLM Security Risks
+Chapter 8: Mitigating LLM Risks: Strategies And Techniques For Each OWASP Category
+Chapter 9: Adapting The OWASP Top 10 To Diverse Deployment Scenarios
+Identifying risk profiles for different LLM application types
+Adapting the Top 10 to chatbots and conversational AI systems
+Show More Items
+Applying the Top 10 to content generation and creative AI applications
+Scaling the Top 10 for enterprise-wide LLM deployment and governance
+Show More Items
+Summary
+Part 3: Building Secure LLM Systems
+10
+Designing LLM Systems For Security: Architecture, Controls, And Best Practices
+Chapter 11: Integrating Security Into The LLM Development Life Cycle: From Data Curation To Deployment
+Chapter 12: Operational Resilience: Monitoring, Incident Response, And Continuous Improvement
+Chapter 13: The Future Of LLM Security: Emerging Threats, Promising Defenses, And The Path Forward
+Appendices: Latest OWASP Top 10 For LLM And OWASP AIVSS Agentic AI Core Risks
+Appendix A: OWASP Top 10 For LLM Applications - 2025 Update
+Appendix B: OWASP AIVSS Core Agentic AI Security Risks
+Appendix C: Unlock Your Exclusive Benefits
+Index
+Other Books You May Enjoy
+search
+settings
+Chapter 9: Adapting the OWASP Top 10 to Diverse Deployment Scenarios
+queue
+AI-Native LLM Security

@@ -1,0 +1,87 @@
+<h2>Three architecture approaches</h2>
+<p class="subtitle">All three are public CLI tools on GitHub. The difference is language, distribution, and how the O'Reilly reading connects to the output.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="python-live" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#0d1117;border-radius:6px;padding:12px;font-family:'Courier New',monospace;font-size:10px;color:#e6edf3;line-height:1.6">
+        <div style="color:#8b949e;margin-bottom:6px"># Install</div>
+        <div>pip install tome-osint</div>
+        <div style="margin-top:6px;color:#8b949e"># Two modes</div>
+        <div>tome scan "Ollama"          <span style="color:#3fb950"># offline DB</span></div>
+        <div>tome research "vLLM"        <span style="color:#f0883e"># reads O'Reilly live</span></div>
+        <div style="margin-top:6px;color:#8b949e"># Pipeline integration</div>
+        <div>visor-chain-runner.sh ollama</div>
+        <div style="color:#58a6ff">  → step 0: tome scan "Ollama"</div>
+        <div style="color:#58a6ff">  → step 1: jaxen import ...</div>
+        <div style="color:#8b949e;margin-top:6px">Platform profiles stored in ~/.tome/profiles.db</div>
+        <div>Research mode uses Playwright + your O'Reilly session</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Python CLI (recommended)</h3>
+      <p>Ships with a pre-built intelligence DB for ~30 AI/ML platforms. Research mode reads O'Reilly live via Playwright for new platforms. Outputs dorks, aimap probe configs, nuclei sketches. Natural fit since Playwright is already in the stack.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Playwright already works in your env</li><li>Easy to extend the DB via PRs</li><li>Claude API can power extraction</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>pip install vs single binary</li><li>Research mode requires O'Reilly sub</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="go-binary" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#0d1117;border-radius:6px;padding:12px;font-family:'Courier New',monospace;font-size:10px;color:#e6edf3;line-height:1.6">
+        <div style="color:#8b949e;margin-bottom:6px"># Install (like aimap)</div>
+        <div>go install github.com/Nicholas-Kloster/tome@latest</div>
+        <div style="margin-top:6px;color:#8b949e"># Use</div>
+        <div>tome profile ollama</div>
+        <div>tome dorks chromadb --format jaxen</div>
+        <div>tome list</div>
+        <div style="margin-top:6px;color:#8b949e"># Intelligence corpus embedded in binary</div>
+        <div style="color:#3fb950">Offline. No O'Reilly needed to use it.</div>
+        <div style="color:#f0883e">Research mode: separate Python script</div>
+        <div style="color:#8b949e;margin-top:6px">Corpus updated in repo as JSON files</div>
+        <div>Community PRs add new platform profiles</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Go binary (like aimap)</h3>
+      <p>Single-binary distribution. Intelligence corpus compiled in. Everyone uses it offline — no O'Reilly needed at runtime. Research mode (book reading) is a separate companion script. Same install pattern as aimap.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Zero dependencies to run</li><li>Matches aimap install pattern</li><li>Community usable without O'Reilly</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Research mode decoupled from main binary</li><li>Go build complexity vs Python</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="corpus-first" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#0d1117;border-radius:6px;padding:12px;font-family:'Courier New',monospace;font-size:10px;color:#e6edf3;line-height:1.6">
+        <div style="color:#8b949e;margin-bottom:4px"># The corpus IS the product</div>
+        <div style="color:#bc8cff">platforms/</div>
+        <div style="color:#e6edf3">  ollama.json       <span style="color:#8b949e">← built from 4 O'Reilly books</span></div>
+        <div>  open-webui.json   <span style="color:#8b949e">← ch3,ch5,ch8 extracted</span></div>
+        <div>  chromadb.json     <span style="color:#8b949e">← 2 books, 6 chapters</span></div>
+        <div style="margin-top:6px;color:#8b949e"># CLI queries it</div>
+        <div>tome query ollama --format dorks</div>
+        <div>tome query ollama --format aimap-probe</div>
+        <div style="margin-top:6px;color:#8b949e"># Each platform file cites the books</div>
+        <div style="color:#3fb950">"source": "Ollama in Action, ch3, O'Reilly"</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Corpus-first</h3>
+      <p>The research output (book-derived platform profiles) is the primary artifact, version-controlled as JSON files. The CLI just queries the corpus. Novel angle: cited intelligence — every finding links back to the exact O'Reilly chapter it came from.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Transparent provenance</li><li>Git-diffable as data changes</li><li>Community can read the sources</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Corpus freshness depends on maintainers</li><li>Less dynamic than live-read mode</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="section" style="margin-top:24px">
+  <p class="subtitle" style="text-align:center">All three ship on GitHub, slot into the visor chain as step 0, and output the same artifacts: default ports · API paths · Shodan dorks · aimap probe config · nuclei template skeleton</p>
+</div>

@@ -1,0 +1,527 @@
+Chapter 8. LLM Serving Frameworks
+
+Over the previous chapters, we’ve explored the fundamentals of LLM serving—system design, service implementation, and practical optimization techniques. This chapter shifts to the foundation layer—the serving frameworks that implement and execute model inference with different optimization techniques under real production constraints. We’ll discuss four widely adopted open source serving frameworks you’re likely to encounter in the wild: vLLM, TensorRT-LLM, SGLang, and llama.cpp. Each has a distinct philosophy, hardware footprint, and battle-tested technology, and is backed by active communities and growing production usage.
+
+Because it’s the most broadly applied framework, we’ll take a deep dive into vLLM—its architecture, initialization and model-execution process, request and token-level scheduling, and layered optimization strategy. Understanding vLLM’s internals will give you strong intuition for how LLM frameworks work in practice and make it easier to evaluate the trade-offs in other frameworks.
+
+Next, we’ll cover the remaining frameworks with concise, decision-oriented overviews and short examples. We’ll close the chapter with the evaluation method we use to compare serving frameworks.
+
+After reading this chapter, you’ll have a solid grasp of what LLM serving frameworks are, why we need them, how they work under the hood, and how to evaluate them for your use case. In the next chapter, we’ll put the optimization techniques and serving framework into practice—tuning LLM performance with the vLLM serving framework.
+
+Why We Need Specialized LLM Serving Frameworks
+
+Before the LLM era, there were already many general-purpose model serving frameworks, such as TensorFlow Serving, TorchServe, and even generalized inference platforms like NVIDIA Triton. These frameworks and platforms were originally designed for deep-learning workloads like image recognition and structured data inference. Those workloads usually have short input sizes, fixed-shaped tensors, and predictable latency requirements, and their primary optimization is usually batch processing.
+
+At this point in the book, it should be clear that serving LLMs is fundamentally different from serving traditional machine-learning models, such as image classifiers or recommendation models. LLM serving and optimization introduce a new set of challenges, including:
+
+Autoregressive generation
+
+LLMs generate outputs one token at a time. Unlike with image models, inference sessions may remain open for seconds or minutes.
+
+Context length explosion
+
+Models must handle input prompts of sizes ranging from a few tokens to hundreds of thousands or even a million tokens. KV cache memory management becomes a critical bottleneck.
+
+Continuous batching
+
+Input and output lengths vary wildly across requests. Static batching strategies underutilize GPUs.
+
+Streaming requirements
+
+Users expect time to first token (TTFT) within hundreds of milliseconds, as well as continuous token streaming.
+
+Resource utilization
+
+GPUs are expensive. Wasting GPU FLOPS due to fragmentation or idle tokens is unacceptable at scale.
+
+To meet these needs, a new class of frameworks has emerged—specialized LLM serving frameworks, such as vLLM, TensorRT-LLM, and SGLang. These frameworks introduce innovations such as paged KV caching, continuous batching, LLM-specific quantization, and speculative decoding (discussed in previous chapters) to address the unique challenges of LLMs. With the help of these LLM serving frameworks, we can squeeze more throughput and lower latency from modern accelerators and deliver far better efficiency—which is why they have become the mainstream choice for LLM serving.
+
+vLLM
+
+vLLM is one of the most popular open source frameworks for LLM serving. Its adoption has been rapid across both open source communities and enterprise teams because it solves the pain points of running LLMs at scale: long prompts, high memory demands, and the need to serve many users simultaneously.
+
+At its core, vLLM introduces paged KV caching and incorporates it with continuous batching, two innovations that dramatically improve throughput and reduce latency. It also supports features like quantization, speculative decoding, streaming responses, and multi-GPU and distributed execution. These capabilities suit it to a wide range of scenarios—like interactive chatbots and RAG systems, batch text generation, multi-tenant serving, and real-time applications.
+
+Many people like vLLM because it “just works.” It’s battle-tested, it’s easy to integrate with open source models and self-fine-tuned models, it maximizes GPU efficiency without requiring deep system-level tuning, and it delivers predictable performance gains out of the box. This mix of usability and efficiency is why vLLM has become a go-to choice for LLM serving in production.
+
+Another strength of vLLM lies in its architecture. Its clean, extensible design makes it easy to incorporate the latest academic advances and practical optimizations. Combined with its large, active community, vLLM is not only well suited to today’s serving challenges but is also positioned to adapt and thrive as future needs evolve.
+
+In this section, we’ll take a deep dive into vLLM—starting with its high-level system design, then walking through the model initialization workflow and request-handling pipeline. From there, we’ll move into more advanced topics, such as how generation requests are prioritized and optimized at the framework level to support a wide range of LLMs.
+
+vLLM’s Architecture
+
+vLLM is optimized for a single model service setup, in which each instance initializes one model at startup. It offers two primary ways to use that model:
+
+LLM class (in-process library)
+
+A pure-Python local interface for offline inference—no separate server or web API required. This “library mode” is ideal when you want to plug vLLM directly into an existing service or batch workflow.
+
+API Server (OpenAI-compatible)
+
+A standalone HTTP server for multiclient and production use and streaming, with easy integration via the Chat/Completions API.
+
+Using the LLM class gives you tight control, low overhead, and easy integration with your own serving stacks, while the API server provides a ready-to-use network endpoint for broader deployment. Let’s see the LLM class example first:
+
+# initialize LLM model
+llm = LLM(
+  model="Qwen/Qwen3-7B-Instruct",
+  trust_remote_code=True, # Qwen uses custom modeling code
+  dtype="float16",  # Use float16 for GPU
+  max_model_len=32768,
+  gpu_memory_utilization=0.8,
+)
+
+# run model generation requests
+outputs = llm.generate(prompts, sampling)
+
+Start the vLLM API server with the vllm serve command:
+
+# start vLLM API server
+vllm serve Qwen/Qwen3-7B-Instruct \
+  --trust-remote-code \
+  --dtype bfloat16 \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.8
+
+# call the Qwen model via the OpenAI-compatible API
+curl http://localhost:8000/v1/chat/completions \
+ -H "Content-Type: application/json" \
+ -d '{
+   "model": "Qwen/Qwen3-7B-Instruct",
+   "temperature": 0.7,
+   "max_tokens": 256,
+   "stream": true
+ }'
+
+Now let’s turn to vLLM’s major internal components, as shown in Figure 8-1.
+
+Figure 8-1. The vLLM system architecture
+LLMEngine and EngineCore
+
+LLMEngine is the high-level interface and main entry point for vLLM’s inference system. It serves as the public API that users interact with, while internally coordinating all the underlying components.
+
+LLMEngine integrates all components into a cohesive system with clear data flow. It handles both synchronous and asynchronous serving scenarios and manages the overall request lifecycle, such as orchestrating the request-processing pipeline and managing the request queue and configuration.
+
+EngineCore is the central orchestrator of vLLM’s inference engine. It integrates the model executor, output processor, and scheduler, and serves as the “inner loop” that coordinates all major components and manages the complete request-processing pipeline.
+
+Scheduler
+
+The Scheduler component acts as the “traffic controller” for the entire inference pipeline. It manages the compute resources and orchestrates token calculation across requests. Its primary responsibility is to allocate limited computational resources (such as GPU memory, KV cache blocks, and processing capacity) efficiently among competing requests while maximizing throughput and maintaining fair access.
+
+From an optimization perspective, Scheduler is responsible for systemwide, model-agnostic optimization strategies such as token-level scheduling, dynamic batching, prefix caching, and chunked prefill. In contrast, model-specific optimizations are applied within the ModelExecutor and GPUWorker, which we’ll discuss next.
+
+Scheduler encapsulates its model-execution plan into a comprehensive data structure called SchedulerOutput, which serves as the “work order” from the scheduler to the ModelExecutor, containing all the information needed to execute a batch of requests. The ModelExecutor responds to run the model. SchedulerOutput essentially tells the ModelExecutor: “Here’s a batch of requests to process. Here’s how many tokens each one should get, here are their input data and parameters, here are the memory blocks allocated for them, and here are any special processing requirements.”
+
+The ModelExecutor uses the information in SchedulerOutput to prepare the actual GPU batch (with flattened input IDs, attention metadata, and KV cache blocks) and execute the model forward pass, then return the results back to the scheduler for the next iteration.
+
+ModelExecutor, (GPU) Worker, and ModelRunner
+
+Since vLLM hosts and runs each model in its own separate process or process group, it employs a layered architecture to handle the cross-process communication, orchestrate distributed worker groups, and handle various model forward-pass execution details. This architecture includes three components:
+
+ModelExecutor
+
+Orchestrates and manages multiple worker processes
+
+GPUWorker
+
+Works as the worker interface that runs in each worker process and manages device/model lifecycle
+
+GPUModelRunner
+
+Actually executes and runs the neural network
+
+This separation of concerns allows each component to focus on its specific model-execution responsibility while maintaining clean interfaces between them. Figure 8-2 illustrates this layered cross-process model-execution architecture.
+
+Figure 8-2. The relationship between ModelExecutor, GPUWorker, and GPUModelRunner
+
+With this architecture in mind, let’s now explore how these components come together in practice—from model initialization to request execution.
+
+Model Initialization Workflow (with Multi-Process Worker)
+
+In this section, we’ll walk through the model initialization workflow in vLLM, covering how it brings up internal components, sets up the worker process group, loads the model from its source into GPU memory, and establishes the communication links.
+
+Because vLLM supports a wide range of models and multiple execution styles—single-device serving, multi-device serving on one node, and even multi-node clusters—the initialization logic can feel complex. To make it easier to follow, we’ll focus on a practical example: initializing an LLM with a multi-process setup, the configuration most commonly used in production today. See Figure 8-3 for a visualization of this process.
+
+Figure 8-3. The vLLM initialization workflow with a multi-process serving setup
+
+Let’s walk through the four steps shown in Figure 8-3:
+
+1. Initialize all components in the vLLM main process
+
+When creating an LLM() instance, we pass in configurations that define the model-setup, resource-usage, and serving-optimization parameters. In the following example, we configure vLLM to host a Qwen model from Hugging Face using a multi-process group with four worker processes. We used a multi-process (MP) backend for single-node model deployment with multiple GPUs, but you can also choose the “ray” backend for cross-machine setup:
+
+llm = LLM(
+  model="Qwen/Qwen2.5-7B-Instruct",
+  # specify 4 workers
+  tensor_parallel_size=4, 
+  # use multi-process model executor
+  distributed_executor_backend="mp"
+)
+
+The LLM class initializes all major components within the vLLM main process and distributes the configuration to the appropriate modules—including the LLMEngine, Scheduler, KVCacheManager, and MultiProcessExecutor.
+
+2. Create a worker process group
+
+During initialization, the MultiProcessExecutor spawns four worker processes for distributed model execution. It also sets up an rpc_broadcast_mq message queue to pass signals and commands to these workers.
+
+3. Initialize the worker processes
+
+Each worker process runs a GPUWorker, which is responsible for executing model inference and communicating with the MultiProcessExecutor. The GPUWorker sets up the CUDA device, establishes cross-process communication, and loads and initializes the model within the worker process. For example, the GPUWorker maintains a message queue (worker_response_mq) to send inference results back to the ModelExecutor.
+
+4. Prepare and load the model
+
+The GPUModelRunner is responsible for locating the correct model implementation based on the configured model name. In our example, it looks up the Qwen model in vLLM’s internal model registry and selects the Qwen3NextForCausalLM implementation. It then calls the class’s __init__ function to load the model weights onto the GPU.
+
+Generation-Request Execution Workflow
+
+With the model loaded, initialized, and set up in vLLM, it’s ready to serve. Let’s look at a high-level workflow for executing generation requests (pictured in four steps in Figure 8-4).
+
+When you run llm.generate(prompts, sampling_params), internally, here is what vLLM does:
+
+The Processor component validates and preprocess the raw inputs into a Request object, including tokenizing the input prompts.
+
+LLMEngine runs an execution loop, which calls the EngineCore repeatedly to process requests. The EngineCore lets the Scheduler decide the next batch of requests to run and the tokens to be processed. Scheduler also applies many optimizations in this step, such as paged attention and continuous batching.
+
+EngineCore passes the scheduled token (SchedulerOutput) from Scheduler to MultiProcessExecutor.
+
+MultiProcessExecutor passes the request to the worker process and delegates the GPU worker to run the model forward pass to calculate the given tokens. This is where the actual model execution happens.
+
+EngineCore passes the model output to the output processor, which creates the final response output to the customer.
+
+Figure 8-4. The vLLM generation-request execution workflow
+
+From this serving workflow, you can see that the actual model execution and model-specific optimization are handled by the GPUWorker, while the general LLM-serving planning and optimization are orchestrated by the Scheduler. Next, let’s take a deeper look at how the Scheduler works.
+
+Scheduler Deep Dive
+
+In general, the Scheduler functions as the central traffic controller for executing generation requests in vLLM’s inference pipeline. We will first examine the key considerations that shape the vLLM Scheduler, and then dive into its request scheduling workflow:
+
+Request resource orchestration
+
+The Scheduler orchestrates the entire lifecycle of a request, from its arrival to completion. It receives incoming requests, organizes them into separate WAITING and RUNNING queues, and makes dynamic decisions about which requests to dispatch based on available computational resources such as GPU memory, KV cache blocks, and token budgets.
+
+The Scheduler also tackles complex resource-allocation challenges, including speculative decoding, prefix caching, and multimodal inputs. Its goal is to maximize throughput while maintaining fairness across concurrent requests, ensuring an efficient and balanced use of system resources.
+
+Token-level resource allocation and scheduling
+
+One of vLLM’s key strengths is that it uses a unified token-based scheduling approach, rather than separating the prefill and decode phases. Unlike a request-based scheduler, which treats each request as a whole unit, vLLM’s Scheduler operates on a token-by-token basis. At each scheduling step, it decides how many tokens each request can process, while respecting global constraints such as maximum batch size and GPU memory limits.
+
+Compared to a request-based scheduling strategy, token-based scheduling offers finer-grained control. It balances competing demands across requests by allocating token budgets, managing KV cache blocks for attention states, and supporting encoder inputs in multimodal models. This approach ensures the total computational load stays within system limits while still maximizing opportunities for parallel execution.
+
+Optimization integration hub
+
+The Scheduler acts as the central integration point for model-agnostic performance optimizations. It coordinates techniques such as prefix caching (reusing previously computed states), speculative decoding (predicting future tokens), chunked prefill (efficiently processing long sequences), and distributed KV cache transfers (enabling multi-GPU execution).
+
+Crucially, the Scheduler makes adaptive decisions on when and how to apply these optimizations. Its choices are guided by request characteristics, resource availability, and overall system state, ensuring that each optimization improves performance without introducing conflicts or inefficiencies.
+
+Dynamic load balancing
+
+The Scheduler monitors system resources and requests characteristics to make real-time decisions that balance latency and throughput. It adapts to dynamic events—arrivals, completions, preemptions, and resource limits—by reevaluating which requests to run, how many tokens to process, and when to apply optimizations. Through efficient queue management and resource allocation, it coordinates with workers to sustain optimal performance.
+
+Request lifecycle management
+
+The Scheduler monitors each request throughout its lifecycle—from arrival in the WAITING queue through execution in the RUNNING queue to final completion.
+
+The Scheduler also applies advanced scheduling policies, such as first-come-first-served (FCFS) or priority-based ordering, to determine execution order. When resources are limited, the Scheduler can preempt lower-priority requests, reallocating capacity to higher-priority tasks. It also manages smooth transitions between request states, ensuring both efficiency and fairness in execution.
+
+Request scheduling workflow
+
+The core task of the Scheduler is to determine the appropriate number of tokens for each incoming generation request and pass them to the model for a forward pass. To fully utilize model and hardware capacity while maintaining a balanced user experience, the Scheduler applies a variety of model-agnostic optimizations during this token selection process. The overall request-scheduling logic is illustrated in Figure 8-5.
+
+Figure 8-5. vLLM internal request scheduling logic
+
+From Figure 8-5, you can see the vLLM scheduler begins its scheduling cycle by building an internal schedule state, which gathers all relevant requests: newly arrived requests, previously paused requests that need to be resumed, currently running requests, and any requests that were preempted earlier. During this initialization phase, the scheduler also updates its accounting of available resources, such as how many decoding tokens remain within the current token budget and how much encoder capacity is still available for multimodal workloads. This initial state frames all decisions that follow.
+
+Once initialization is complete, the scheduler begins assigning compute in two prioritized waves. Running requests are handled first, because they already occupy KV cache blocks and have active generation timelines. For each running request, the scheduler determines how many new tokens must be generated, verifies encoder constraints when multimodal inputs are involved, and checks whether there is enough available KV cache to continue execution.
+
+At this stage, vLLM applies several optimizations that significantly reduce latency and improve throughput. Chunked prefill allows partial processing of long prompts without requiring the entire prompt to be encoded in a single step. Prefix caching enables the scheduler to reuse KV cache blocks that were computed earlier for identical prefixes across different requests. Meanwhile, speculative decoding generates draft tokens ahead of time, enabling faster generation if those predictions later match the model’s verified output. If at any point resources become constrained, the scheduler may preempt lower-priority work to ensure fairness and consistency.
+
+After all running requests have been handled, the scheduler turns to the waiting queue. Any requests that can fit within the remaining token and encoder budgets are activated and incorporated into the current execution batch. Although waiting requests receive lower priority, they still benefit from the same optimizations applied to running requests whenever applicable.
+
+When request assignment is complete, the scheduler enters a post-processing phase that performs additional coordination work necessary for the upcoming decoding step. In this phase, the scheduler tracks which LoRA adapters must be active for each request, prepares encoder inputs for multimodal tasks, and finalizes any draft-token predictions that will be used during speculative decoding. The goal of this stage is to consolidate all scheduling decisions into a clean, executable plan.
+
+Finally, the scheduler assembles a SchedulerOutput object that summarizes the results of the entire cycle. This output lists the requests that are newly scheduled, the number of tokens allocated to each request, and the total number of scheduled tokens across the batch. It also includes metadata needed by the model executor, such as KV cache assignments, prepared encoder inputs, or multimodal routing information. The model executor then consumes this output to run the actual forward passes that produce new tokens.
+
+In addition, to support a model-agnostic request–token scheduling process, the vLLM Scheduler operates at the token level. It iterates through each request—first from the running queue, then from the waiting queue—and determines how many tokens from which request to include in the next forward pass, while ensuring the total token count remains within the model’s limits.
+
+At the implementation level, the Scheduler seeks to minimize the gap between num_computed_tokens (the number of tokens already processed) and num_tokens_with_spec (the total tokens to be processed, including prompt, output, and speculative tokens). This goal of closing the gap drives the chain of optimization strategies applied during scheduling. Here’s how that looks in the code:
+
+while req_index < len(self.running) and token_budget > 0:
+    request = self.running[req_index]
+    num_new_tokens = (request.num_tokens_with_spec +
+                      request.num_output_placeholders -
+                      request.num_computed_tokens)
+SEPARATE PRIORITIZATION AND OPTIMIZATION
+
+In vLLM scheduling, the request queues determine the order of request processing, while the comparison between num_​compu⁠ted_tokens and num_tokens_with_spec dictates how many tokens each request is allowed to execute.
+
+This clear separation of request prioritization and token-level scheduling allows the Scheduler to combine diverse request-prioritization strategies with LLM execution optimizations in a unified framework, maintaining fairness across concurrent requests while ensuring efficient use of system resources.
+
+Applying model optimization techniques
+
+During scheduling, vLLM integrates several of the optimization techniques we introduced in Chapters 6 and 7, including chunked prefill, prefix caching, guided decoding (via grammar-constrained finite-state machines), PD disaggregation, and more. To illustrate how these work in practice, let’s walk through two quick examples:
+
+Chunked prefill
+
+The Scheduler ensures that the number of new tokens executed for a request does not exceed the configured prefill chunk size—scheduler_config.long_prefill_token_threshold:
+
+if (0 < self.scheduler_config.long_prefill_token_threshold \
+                  < num_new_tokens):
+   num_new_tokens = self.scheduler_config.long_prefill_token_threshold
+Prefix caching
+
+The Scheduler handles prefix caching to reuse computed KV cache blocks from local or remote cache:
+
+# Get already-cached tokens.
+if request.num_computed_tokens == 0:
+    # Get locally cached tokens.
+    new_computed_blocks, num_new_local_computed_tokens = \
+          self.kv_cache_manager.get_computed_blocks(
+                           request)
+
+    # Get externally cached tokens.
+    if self.connector is not None:
+        num_external_computed_tokens, load_kv_async = (
+            self.connector.get_num_new_matched_tokens(
+                request, num_new_local_computed_tokens))
+
+We encourage you to explore other optimization techniques and their implementations—such as guided decoding and prefill-decoding—further on your own. A good starting point is the Scheduler.py code implementation. Additionally, Aleksa Gordić’s blog post “Inside vLLM: Anatomy of a High-Throughput LLM Inference System” is an excellent resource.
+
+vLLM’s Layered Optimization Strategy
+
+One of the most important optimization philosophies in vLLM is that optimization must happen at the right level.
+
+LLMs evolve rapidly—new architectures, novel attention mechanisms, and hardware-driven execution tricks appear almost monthly. A system like vLLM cannot hardcode its optimizations for one model family or hardware type; instead, it must provide a flexible yet unified framework that supports arbitrary architectures and model sizes, while still delivering system-wide throughput, fairness, and resource efficiency.
+
+Since vLLM’s overarching goal is to maximize throughput while preserving fairness across concurrent requests, it needs to handle many users, diverse workloads, and variable model sizes without starving smaller requests or overloading GPU memory. The challenge is that no single layer of the system can address all optimization needs. Some optimizations apply universally across models (such as batching and caching), while others are tied to model architecture (like attention kernels) or even specific hardware instructions (for example, tensor cores).
+
+To resolve this tension, vLLM employs a layered optimization strategy, organizing optimization responsibilities across four main levels:
+
+Scheduler: System-wide, model-agnostic optimizations
+
+The Scheduler is responsible for fairness, efficiency, and scalability at the system level.
+
+ModelExecutor: Model architecture-specific optimizations
+
+While the Scheduler remains model-agnostic, the ModelExecutor understands the details of each model architecture. For example, it applies fused attention kernels for Transformer-based models or specialized operators for multimodal encoders. This level isolates architecture-aware optimizations so they can evolve independently from system-level scheduling.
+
+Model layer: Component-specific optimizations
+
+At the model architecture’s layer level (for example, the attention layer and feedforward block), optimizations are tailored to computational bottlenecks. Techniques such as KV cache reuse, flash attention, and layer-wise operator fusion happen here. This design ensures that optimizations that target a specific subcomponent don’t leak into the system-wide scheduling logic.
+
+CustomOp: Hardware-specific optimizations
+
+Finally, CustomOp captures optimizations for the underlying hardware, such as CUDA kernels, tensor-core acceleration, or quantized operators. By isolating them here, vLLM can take advantage of new GPU capabilities and accelerators without changing its higher-level scheduling or model logic.
+
+This layered strategy avoids cluttering the Scheduler with model-specific details while still allowing deep specialization where it matters. It also makes vLLM futureproof: as new architectures or hardware arise, optimizations can be slotted into the right layer without redesigning the entire system.
+
+TensorRT-LLM
+
+TensorRT-LLM is NVIDIA’s open source library for high-performance LLM inference on NVIDIA GPUs. From a model checkpoint, it builds highly tuned TensorRT (TRT) engines and provides Python/C++ runtimes with modern serving capabilities, including in-flight batching (TRT-LLM version of continuous batching), paged KV cache, speculative decoding, multi-precision quantization (FP8/FP4/INT4/INT8), and tensor/pipeline parallelism. It integrates tightly with the NVIDIA serving ecosystem—most notably Dynamo and Triton.
+
+Let’s look at a quick example with TensorRT-LLM’s high-level LLM API:
+
+llm = LLM(model="Qwen/Qwen3-7B")
+
+# Sample prompts.
+prompts = [
+   "Hello, my name is",
+   "The capital of France is",
+   "The future of AI is",
+]
+
+# Create sampling params.
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
+
+# Run model generation request 
+for output in llm.generate(prompts, sampling_params):
+   print(
+       f"Prompt: {output.prompt!r}, Generated text: {output.outputs[0].text!r}"
+   )
+
+A core objective of TensorRT-LLM is to demonstrate the maximum practical performance of NVIDIA GPUs for LLMs and to illuminate how to fully exploit Tensor Cores and CUDA kernels.
+
+TensorRT-LLM is best for organizations that have standardized on NVIDIA’s hardware and serving tech stack and are seeking best-in-class efficiency and throughput in production.
+
+SGLang
+
+SGLang is a newer entrant, targeting structured-generation and agent applications. SGLang is an open source, high-performance serving framework for LLMs and vision-language models (VLMs). It co-designs a fast backend runtime (kernels, caching, scheduling) with a flexible frontend language and API (which is OpenAI-compatible and native) to make generation faster and more controllable.
+
+SGLang’s headline features (available on GitHub) include RadixAttention (for prefix/KV reuse across calls), continuous batching, paged attention/KV, speculative decoding (EAGLE-2/3), chunked prefill, structured outputs (JSON/regex/EBNF), multi-LoRA batching, and parallelism modes (tensor/pipeline/expert/data). A quick example:
+
+# load Qwen3 model
+llm = sgl.Engine(model_path="Qwen/Qwen3-7B")
+prompts = [
+    "Hello, my name is",
+    "The president of the United States is",
+    "The capital of France is",
+    "The future of AI is",
+]
+
+sampling_params = {"temperature": 0.8, "top_p": 0.95}
+
+# Run model generation requests 
+outputs = llm.generate(prompts, sampling_params)
+for prompt, output in zip(prompts, outputs):
+    print("===============================")
+    print(f"Prompt: {prompt}\nGenerated text: {output['text']}")
+
+SGLang targets a broader range of hardware than TensorRT-LLM does. Its official documentation and examples cover NVIDIA (H100/Blackwell), AMD Instinct, CPU, TPU, Jetson Orin, and Ascend deployments, making it attractive for multi-vendor fleets.
+
+Functionally, SGLang can be viewed as a peer to vLLM: it emphasizes infrastructure portability, broad open-model support, aggressive performance optimizations (for example, continuous batching, speculative decoding, and prefix/KV reuse), scale-out routing, and strong support for agentic, multistep prompts.
+
+In practice, SGLang’s performance is competitive—sometimes better on certain workloads—while vLLM currently enjoys a larger open source community and ecosystem.
+
+Llama.cpp
+
+Llama.cpp is a lean, open source C/C++ inference stack built to run modern open-weight LLMs efficiently on almost any machine—from laptops and workstations to on-prem servers and edge devices. Models are packaged in the GGUF format (typically converted from Hugging Face checkpoints with the repo’s scripts). You can serve them via a built-in, OpenAI-compatible HTTP server or drive them from small CLI tools for experiments and benchmarking.
+
+The project emphasizes minimal dependencies, fast startup, aggressive integer quantization (for example, 8/6/5/4-bit), and a portable set of CPU/GPU backends (CPU with SIMD, plus optional accelerators such as Metal, CUDA/ROCm, or Vulkan).
+
+What distinguishes llama.cpp is its “runs anywhere” ethos and tiny operational footprint. Its primary goal is to deliver state-of-the-art local inference with minimal setup and solid performance across a wide range of hardware, including low-cost or low-profile devices, both offline and in the cloud. By contrast, the other three serving frameworks covered here—vLLM, TensorRT-LLM, and SGLang—optimize first for high-throughput, low-latency serving on datacenter GPUs, such as multi-tenant batching, advanced scheduling, and large-scale deployment features.
+
+Llama.cpp prioritizes portability, simplicity, and cost efficiency over absolute peak throughput, making it ideal for local development, privacy-sensitive workloads, edge deployment, and budget-constrained environments. However, it still offers optional GPU acceleration when available.
+
+Let’s see a quick example for running the Qwen3 model on a CPU device with llama.cpp:
+
+from llama_cpp import Llama
+# Run Qwen3 model on CPU with LlamaCPP
+
+# load Qwen model (in GGUF format) from HuggingFace
+llm = Llama.from_pretrained(
+   repo_id="Qwen/Qwen3-8B-GGUF",
+   filename="*Q8_0.gguf",
+   verbose=False
+)
+
+# Run LLM generation with high-level API
+output = llm(
+     "Q: Name the planets in the solar system? A: ", # Prompt
+     max_tokens=32, # Generate up to 32 tokens
+     stop=["Q:", "\n"], # Stop generating just 
+          # before the model would generate a new question
+     echo=True # Echo the prompt back in the output
+) 
+
+# Example for chat completion API
+output = llm.create_chat_completion(
+    messages=[
+        {
+            "role": "system",
+            "content": "You are an assistant who perfectly describes "
+                       "images.",
+        },
+        {
+            "role": "user",
+            "content": "Describe this image in detail please.",
+        },
+    ]
+)
+
+Because llama.cpp brings LLM serving to low-profile devices (CPUs and edge hardware), it sees strong adoption in the three following scenarios:
+
+Local development, where you can run the built-in OpenAI-compatible server on your machine and reuse existing clients (for example, RAG and search systems)
+
+Private and on-prem assistants, keeping all data inside your VPC or device boundary
+
+Edge inference on laptops, desktops, Apple Silicon, and small servers—enabled by aggressive 2- to 8-bit quantization and portable CPU/GPU backends
+
+If you want to expose llama.cpp through a REST API call, you can use Ollama, a higher-level framework that wraps around llama.cpp (and sometimes other backends, like Mistral.cpp or RWKV runners) to make local LLM use simple, consistent, and developer-friendly.
+
+Not every LLM application needs high-throughput serving. When you run inference locally (on-device or on-prem edge), the goals shift:
+
+You want to optimize for latency and responsiveness, not fleet-wide tokens per second.
+
+Low concurrency (often a single user) makes large batching and complex schedulers less valuable.
+
+Footprint and cost (in memory, compute, and power) become primary constraints.
+
+Privacy and offline reliability are first-class requirements.
+
+Llama.cpp fits this profile: it can run open-weight models directly on CPUs, Apple Silicon, and small GPUs, and exposes an OpenAI-compatible server for drop-in integration. The result is a super-low-cost, low-ops serving option for local development, private and on-prem assistants, and edge deployments—without per-token cloud charges or data leaving the device.
+
+Selecting the Right Framework
+
+The general idea is to choose the framework that best matches your service-level objectives (SLOs), hardware, and operational reality—not the one with the flashiest benchmark. In other words: workload first, not hype.
+
+The evaluation approach we generally recommend is:
+
+Start with SLOs, not features. Write down your targets for latency (TTFT, p95/p99), throughput (TPS/QPS), cost per token, quality constraints (structured JSON, safety), and availability.
+
+Analyze the real prompts from your use case: make it clear whether it is prefill-heavy or decode-heavy; what’s the context length; and whether it includes tool calls and/or multi-turn chains.
+
+Make it an apples-to-apples comparison by using the same model, dtype/quantization, max sequence, batch/concurrency, and streaming settings across contenders.
+
+Measure operability, using metrics such as cold-start time, observability, autoscaling behavior, multi-tenancy fairness, upgrade friction, and failure modes.
+
+Account for hardware and vendor lock-in. If you use multiple vendors (for instance, NVIDIA/AMD/CPU/TPU/edge), portability weighs heavily.
+
+Plan for change. Model swaps and new decoding tricks happen weekly, so opt for frameworks you can update without major surgery.
+
+Following our own advice, we’ll conclude our library recommendation as follows:
+
+If you want the fastest path to production, broad model coverage, and a Python-native workflow, choose vLLM. It offers strong baseline performance, continuous batching, and a large community and ecosystem.
+
+If your workload involves agentic or multistep workflows, strict JSON/regex (grammar-constrained) outputs, and multi-vendor portability, pick SGLang. You get prefix/KV reuse, speculative decoding, and a router for scale-out clusters.
+
+If you’re all-in on NVIDIA and its serving stack and want peak tokens per dollar at scale, start with TensorRT-LLM. First-class Triton and Dynamo integration and deep CUDA/Tensor Core optimizations make it the efficiency leader on NVIDIA hardware.
+
+If you need local, on-prem, or edge serving with a tiny footprint, low cost, and privacy by default, use llama.cpp. GGUF quantization (2- to 8-bit) and portable CPU/GPU backends make it ideal for laptops, desktops, and small servers.
+
+KEEP AN OPEN MIND WHEN EVALUATING SERVING FRAMEWORKS
+
+LLM serving evolves fast—new architectures, kernels, schedulers, quantization schemes, and runtime features land every month. Frameworks must adapt just as quickly to incorporate these innovations.
+
+As serving engineers, we evaluate and reassess different serving frameworks every three to six months and select the option that best fits our current SLOs and hardware reality. We also need to build a framework abstraction layer and have a clear exit plan that lets us swap frameworks without rewriting our apps.
+
+The goal isn’t to crown a permanent winner—it’s to remain flexible so our system can ride the next wave, not be capsized by it.
+
+Summary
+
+In this chapter, we outlined why general-purpose ML serving stacks fall short for LLMs—chiefly because they lack LLM-specific feature support such as token-level scheduling, KV-cache management, long-context memory handling, and streaming-first execution.
+
+We then took a deep dive into vLLM, covering its architecture, request scheduling and prioritization, and layered optimization strategy, which separates system-wide scheduling from model- and kernel-level specialization. We rounded out the survey with three complementary frameworks: TensorRT-LLM for pushing peak efficiency on NVIDIA GPUs, llama.cpp for lightweight local/on-prem/edge serving, and SGLang for agentic, multistep workflows and structured outputs across diverse hardware.
+
+The core takeaway we offer you is that your framework choice is contextual. Many teams begin with vLLM for online serving and llama.cpp for local development, but specific requirements—like edge deployment, NVIDIA-centric optimization, strict JSON/grammar outputs, or agent pipelines—may point you to TensorRT-LLM or SGLang instead. As the ecosystem evolves, it’s a good idea to stay framework-agnostic. In practice, this means you should do periodic framework research, prefer portable interfaces, and be ready to swap components so your serving stack can adapt to changing business and technical needs.
+
+table of contents
+close x
+Hands-On LLM Serving and Optimization
+
+Chi Wang, Peiheng Hu
+
+Published by O'Reilly Media, Inc.
+queue
+0% complete
+Content Progress 0% completed
+Approx. 11 hours left
+Collapse
+Contents
+Highlights
+Foreword
+Preface
+1. Introduction To Model Serving And Optimization
+2. Large Language Model Serving
+3. Model Serving System Design: A Deep Dive
+4. Model Serving Best Practices
+5. Challenges When Serving LLMs
+6. Essential LLM Optimization Techniques
+7. Advanced LLM Optimization Techniques
+8. LLM Serving Frameworks
+Why We Need Specialized LLM Serving Frameworks
+vLLM
+Show More Items
+TensorRT-LLM
+SGLang
+Llama.cpp
+Selecting the Right Framework
+Summary
+9. LLM Optimization In Practice
+10. Advancements In LLM Serving
+Index
+About The Authors
+search
+settings
+8. LLM Serving Frameworks
+queue
+Hands-On LLM Serving and Optimization
