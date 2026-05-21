@@ -2,7 +2,7 @@
   "platform": "langfuse",
   "display_name": "Langfuse (self-hosted)",
   "category": "observability",
-  "default_ports": [3000],
+  "default_ports": [3000, 3100],
   "api_paths": ["/api/public", "/api/v1", "/traces", "/sessions"],
   "auth_default": "api_key",
   "auth_config_env": [
@@ -21,6 +21,7 @@
   "fingerprint": {
     "passive": [
       "http.title:\"langfuse\"",
+      "http.html:\"langfuse\"",
       "port:3000 http.html:\"langfuse\""
     ],
     "active_probe": {
