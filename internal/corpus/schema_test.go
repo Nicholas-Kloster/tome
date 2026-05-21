@@ -1,9 +1,19 @@
 package corpus
 
 import (
+	"embed"
 	"encoding/json"
+	"os"
 	"testing"
 )
+
+//go:embed testdata/*.json
+var testFS embed.FS
+
+func TestMain(m *testing.M) {
+	Init(testFS)
+	os.Exit(m.Run())
+}
 
 func TestPlatformUnmarshal(t *testing.T) {
 	raw := `{
@@ -66,5 +76,44 @@ func TestCredUnmarshal(t *testing.T) {
 	}
 	if c.User != "admin" || c.Pass != "changeme" || c.Context != "basic auth" {
 		t.Errorf("got %+v", c)
+	}
+}
+
+func TestLoadPlatform(t *testing.T) {
+	p, err := LoadPlatform("test-fixture")
+	if err != nil {
+		t.Fatalf("LoadPlatform: %v", err)
+	}
+	if p.Platform != "test-fixture" {
+		t.Errorf("platform = %q, want test-fixture", p.Platform)
+	}
+	if len(p.DefaultPorts) != 1 || p.DefaultPorts[0] != 9999 {
+		t.Errorf("default_ports = %v, want [9999]", p.DefaultPorts)
+	}
+}
+
+func TestLoadPlatformMissing(t *testing.T) {
+	_, err := LoadPlatform("does-not-exist")
+	if err == nil {
+		t.Error("expected error for missing platform, got nil")
+	}
+}
+
+func TestListPlatforms(t *testing.T) {
+	platforms, err := ListPlatforms()
+	if err != nil {
+		t.Fatalf("ListPlatforms: %v", err)
+	}
+	if len(platforms) == 0 {
+		t.Error("expected at least one platform")
+	}
+	found := false
+	for _, p := range platforms {
+		if p.Platform == "test-fixture" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("test-fixture not found in list")
 	}
 }
