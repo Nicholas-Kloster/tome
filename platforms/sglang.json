@@ -1,0 +1,46 @@
+{
+  "platform": "sglang",
+  "display_name": "SGLang",
+  "category": "inference_serving",
+  "default_ports": [8000],
+  "api_paths": ["/v1/completions", "/v1/chat/completions", "/v1/models"],
+  "auth_default": "none",
+  "auth_config_env": [],
+  "default_creds": [],
+  "install_tell": "python -m sglang.launch_server --model-path meta-llama/Meta-Llama-3-8B-Instruct --port 8000",
+  "misconfig_patterns": [
+    "OpenAI-compat API on public interface without auth",
+    "RadixAttention state accessible via timing side-channel"
+  ],
+  "fingerprint": {
+    "passive": [
+      "port:8000 http.html:\"sglang\"",
+      "http.html:\"sglang.launch_server\""
+    ],
+    "active_probe": {
+      "path": "/v1/models",
+      "method": "GET",
+      "response_markers": ["\"object\"", "\"data\""],
+      "false_positive_check": "response must include sglang-specific structured gen endpoints alongside /v1/models"
+    }
+  },
+  "shodan_dorks": {
+    "basic": "\"sglang\" port:8000",
+    "strict": "port:8000 http.html:\"sglang\"",
+    "version": "port:8000 http.html:\"sglang\" http.html:\"version\""
+  },
+  "deployment_tells": [
+    "RadixAttention prefix caching in startup logs",
+    "sglang.launch_server process name",
+    "Structured generation endpoints alongside OpenAI-compat"
+  ],
+  "pivot_paths": [
+    "GET /v1/models → model name → identify org's model selection",
+    "RadixAttention cache timing → infer prior request content",
+    "Port 8000 overlap with llama.cpp — verify via Server header"
+  ],
+  "vulnerabilities": [],
+  "sources": [
+    "Generative AI on Kubernetes (9781098171919) ch01"
+  ]
+}
