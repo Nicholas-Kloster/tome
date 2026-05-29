@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 var versionRE = regexp.MustCompile(`"version"\s*:\s*"([^"]+)"`)

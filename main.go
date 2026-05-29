@@ -3,8 +3,8 @@ package main
 import (
 	"embed"
 
-	"github.com/Nicholas-Kloster/tome/cmd"
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/cmd"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 //go:embed platforms/*.json

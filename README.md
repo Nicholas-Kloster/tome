@@ -1,11 +1,11 @@
 # TOME — Technical OSINT Mining Engine
 
-AI/ML infrastructure intelligence for Shodan operators. TOME embeds a 17-platform corpus derived from vendor documentation and O'Reilly research: default ports, API paths, auth defaults, default credentials, Shodan dorks, and misconfiguration patterns.
+AI/ML infrastructure intelligence for Shodan operators. TOME embeds a 19-platform corpus derived from vendor documentation and O'Reilly research: default ports, API paths, auth defaults, default credentials, Shodan dorks, and misconfiguration patterns.
 
 ## Install
 
 ```bash
-go install github.com/Nicholas-Kloster/tome@latest
+go install github.com/nuclide-research/tome@latest
 ```
 
 ## Commands
@@ -18,9 +18,10 @@ $ tome list
 NAME                 CATEGORY           AUTH       PORTS
 ----------------------------------------------------------------------
 chromadb             vector_db          none       8000
-huggingface-tei      inference_serving  none       80, 443
-kserve               inference_serving  api_key    8080, 8081
-langfuse             observability      api_key    3000
+embedding-api        embedding_serving  none       8001, 8000, 8080
+kserve               inference_serving  none       8080
+langfuse             observability      api_key    3000, 3100
+langserve            orchestration      none       8000
 ...
 ```
 
@@ -51,7 +52,7 @@ tome probe ollama | aimap probe --stdin
 ```
 
 ### `tome scan <ip>`
-Passive fingerprint via Shodan API. Matches host banner data against all 17 platform signatures and returns confidence-scored findings.
+Passive fingerprint via Shodan API. Matches host banner data against all 19 platform signatures and returns confidence-scored findings.
 
 ```bash
 export SHODAN_API_KEY=your_key
@@ -70,16 +71,18 @@ tome scan 1.2.3.4 -f json | jq .
 | SGLang | inference_serving | none |
 | llama.cpp | inference_serving | none |
 | TGI | inference_serving | none |
-| KServe | inference_serving | api_key |
-| NVIDIA NIM | inference_serving | api_key |
-| HuggingFace TEI | inference_serving | none |
+| KServe | inference_serving | none |
+| NVIDIA NIM | inference_serving | none |
+| Ray Serve | inference_serving | none |
+| Custom Embedding API (FastAPI/uvicorn) | embedding_serving | none |
+| OpenVINO Model Server | embedding_serving | none |
 | Weaviate | vector_db | none |
 | ChromaDB | vector_db | none |
 | Qdrant | vector_db | none |
 | Milvus | vector_db | none |
 | n8n | orchestration | none |
-| Ray Serve | orchestration | none |
-| MLflow | mlops | none |
+| LangServe | orchestration | none |
+| MLflow | observability | none |
 | LangFuse | observability | api_key |
 | LangSmith | observability | api_key |
 

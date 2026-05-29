@@ -1,4 +1,4 @@
-module github.com/Nicholas-Kloster/tome
+module github.com/nuclide-research/tome
 
 go 1.22.2
 

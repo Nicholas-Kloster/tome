@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 // FormatProfile renders a full platform profile in the requested format.

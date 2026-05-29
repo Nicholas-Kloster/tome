@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
-	"github.com/Nicholas-Kloster/tome/internal/output"
+	"github.com/nuclide-research/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/output"
 	"github.com/spf13/cobra"
 )
 

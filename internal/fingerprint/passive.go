@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 // ShodanHost is the relevant subset of the Shodan host API response.

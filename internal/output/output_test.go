@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 var testPlatform = corpus.Platform{

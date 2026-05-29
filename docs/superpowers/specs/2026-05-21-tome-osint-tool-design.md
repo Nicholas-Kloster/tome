@@ -13,7 +13,7 @@ TOME is a Go CLI that bundles a book-derived intelligence corpus of AI/ML infras
 Slots into the Visor chain as step -1 (pre-JAXEN): TOME generates the dorks JAXEN uses to harvest.
 
 ```
-go install github.com/Nicholas-Kloster/tome@latest
+go install github.com/nuclide-research/tome@latest
 ```
 
 ---
@@ -281,7 +281,7 @@ The `platforms/` directory is embedded via `//go:embed platforms/*.json` — no 
 ## Distribution
 
 ```
-go install github.com/Nicholas-Kloster/tome@latest
+go install github.com/nuclide-research/tome@latest
 ```
 
 Same pattern as aimap. Single binary, cross-platform (linux/darwin/windows AMD64 + ARM64).

@@ -45,7 +45,7 @@
 
 ```bash
 cd /path/to/tome
-go mod init github.com/Nicholas-Kloster/tome
+go mod init github.com/nuclide-research/tome
 go get github.com/spf13/cobra@latest
 ```
 
@@ -1451,7 +1451,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 var testPlatform = corpus.Platform{
@@ -1540,7 +1540,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 // FormatProfile renders a full platform profile in the requested format.
@@ -1738,8 +1738,8 @@ package main
 import (
 	"embed"
 
-	"github.com/Nicholas-Kloster/tome/cmd"
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/cmd"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 //go:embed platforms/*.json
@@ -1844,8 +1844,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
-	"github.com/Nicholas-Kloster/tome/internal/output"
+	"github.com/nuclide-research/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -1909,8 +1909,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
-	"github.com/Nicholas-Kloster/tome/internal/output"
+	"github.com/nuclide-research/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -1993,8 +1993,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
-	"github.com/Nicholas-Kloster/tome/internal/output"
+	"github.com/nuclide-research/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -2070,8 +2070,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
-	"github.com/Nicholas-Kloster/tome/internal/output"
+	"github.com/nuclide-research/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -2166,7 +2166,7 @@ package fingerprint
 import (
 	"testing"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 var weaviatePlatform = corpus.Platform{
@@ -2277,7 +2277,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 // ShodanHost is the relevant subset of the Shodan host API response.
@@ -2489,7 +2489,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/corpus"
 )
 
 var versionRE = regexp.MustCompile(`"version"\s*:\s*"([^"]+)"`)
@@ -2578,9 +2578,9 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/Nicholas-Kloster/tome/internal/corpus"
-	"github.com/Nicholas-Kloster/tome/internal/fingerprint"
-	"github.com/Nicholas-Kloster/tome/internal/output"
+	"github.com/nuclide-research/tome/internal/corpus"
+	"github.com/nuclide-research/tome/internal/fingerprint"
+	"github.com/nuclide-research/tome/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -2826,7 +2826,7 @@ git tag v0.1.0
 git push origin main --tags
 ```
 
-Expected: GitHub Actions runs 5 build jobs, produces release at `github.com/Nicholas-Kloster/tome/releases/tag/v0.1.0`.
+Expected: GitHub Actions runs 5 build jobs, produces release at `github.com/nuclide-research/tome/releases/tag/v0.1.0`.
 
 ---
 
